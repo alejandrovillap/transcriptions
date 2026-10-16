@@ -586,3 +586,17 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .crop-row .state-sub { font-size: 12px; }
 .crop-btns { display: flex; gap: 6px; flex: none; }
 .crop-row .ghost-btn { white-space: nowrap; flex: none; }
+/* Auto-frames crop on the capture preview: drag to move, edges/corners to resize */
+.pv-stage { position: relative; overflow: hidden; line-height: 0; touch-action: none; }
+.pv-stage img { width: 100%; height: 100%; max-width: none; max-height: none; display: block; }
+.crop-box { position: absolute; border: 2px solid var(--accent); box-shadow: 0 0 0 9999px rgba(0, 0, 0, .55); cursor: move; box-sizing: border-box; }
+.crop-box.dragging { border-style: dashed; }
+.crop-box .ch { position: absolute; width: 12px; height: 12px; margin: -6px; background: var(--accent); border: 2px solid #fff; border-radius: 3px; }
+.crop-box .ch-n, .crop-box .ch-s { left: 50%; width: 22px; margin-left: -11px; cursor: ns-resize; }
+.crop-box .ch-e, .crop-box .ch-w { top: 50%; height: 22px; margin-top: -11px; cursor: ew-resize; }
+.crop-box .ch-n { top: 0; } .crop-box .ch-s { top: 100%; }
+.crop-box .ch-w { left: 0; } .crop-box .ch-e { left: 100%; }
+.crop-box .ch-nw { left: 0; top: 0; cursor: nwse-resize; } .crop-box .ch-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.crop-box .ch-ne { left: 100%; top: 0; cursor: nesw-resize; } .crop-box .ch-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.preview .pv-label { pointer-events: none; }
+.preview:has(.crop-box) .pv-label { display: none; }

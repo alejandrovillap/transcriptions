@@ -1010,24 +1010,6 @@ def _capture_info() -> dict:
 async def _refresh_preview():
     if HELPER.exists():
         await run_cmd(str(HELPER), "--capture", str(CAPTURE_CONFIG), str(CAPTURE_PREVIEW), timeout=20)
-        crop = S._read_json(CAPTURE_CONFIG, {}).get("frames_crop")
-        if crop and CAPTURE_PREVIEW.exists():
-            await asyncio.to_thread(_mark_crop, CAPTURE_PREVIEW, crop)
-
-
-def _mark_crop(path: Path, crop: dict):
-    """Show the auto-frames crop on the preview: the rest dimmed, the crop outlined."""
-    import cv2
-    im = cv2.imread(str(path))
-    if im is None:
-        return
-    h, w = im.shape[:2]
-    x0, y0 = int(crop["x"] * w), int(crop["y"] * h)
-    x1, y1 = int((crop["x"] + crop["w"]) * w), int((crop["y"] + crop["h"]) * h)
-    out = (im * 0.35).astype(im.dtype)
-    out[y0:y1, x0:x1] = im[y0:y1, x0:x1]
-    cv2.rectangle(out, (x0, y0), (x1, y1), (240, 92, 75), max(3, w // 300))   # accent (BGR)
-    cv2.imwrite(str(path), out)
 
 
 @app.get("/api/capture")
@@ -1116,11 +1098,23 @@ async def capture_detect_video():
 
 
 @app.post("/api/capture/crop")
-async def capture_crop_reset():
-    """Auto frames capture the whole area again."""
+async def capture_crop(data: dict = Body(default={})):
+    """Set the auto-frames crop by hand ({"crop": {x, y, w, h}} in fractions of the area),
+    or reset it (no crop: auto frames capture the whole area again)."""
     cfg = S._read_json(CAPTURE_CONFIG, {"mode": "full"})
-    cfg.pop("frames_crop", None)
-    cfg.pop("frames_crop_method", None)
+    crop = data.get("crop")
+    if crop:
+        try:
+            x, y, w, h = (float(crop[k]) for k in ("x", "y", "w", "h"))
+        except (KeyError, TypeError, ValueError):
+            _err(ValueError("Bad crop"))
+        x, y = min(max(x, 0.0), 0.98), min(max(y, 0.0), 0.98)
+        w, h = min(max(w, 0.02), 1.0 - x), min(max(h, 0.02), 1.0 - y)
+        cfg["frames_crop"] = {"x": round(x, 4), "y": round(y, 4), "w": round(w, 4), "h": round(h, 4)}
+        cfg["frames_crop_method"] = "manual"
+    else:
+        cfg.pop("frames_crop", None)
+        cfg.pop("frames_crop_method", None)
     S._write_json(CAPTURE_CONFIG, cfg)
     return _capture_info()
 

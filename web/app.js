@@ -1263,14 +1263,18 @@ function renderCapturePop(waiting) {
       <button class="mode ${cfg.mode === 'window' ? 'on' : ''}" data-m="window">${ICON.window}Window<small>click a window</small></button>
     </div>
     ${waiting ? `<div class="waiting"><span class="spinner"></span>${waiting}</div>` : ''}
-    <div class="preview">${st.capture && st.capture.preview ? `<img src="${esc(st.capture.preview)}" alt="Capture preview">` : '<span class="state-sub">No preview yet</span>'}<span class="pv-label">${esc(label)}</span></div>
+    <div class="preview" id="pvBox">${st.capture && st.capture.preview
+      ? `<div class="pv-stage" id="pvStage"><img id="pvImg" src="${esc(st.capture.preview)}" alt="Capture preview">${cfg.frames_crop ? cropBoxHtml(cfg.frames_crop) : ''}</div>`
+      : '<span class="state-sub">No preview yet</span>'}<span class="pv-label">${esc(label)}</span></div>
     <div class="pop-row"><button class="ghost-btn small" id="winListBtn">Choose from window list</button><button class="ghost-btn small" id="pvRefresh">Refresh preview</button></div>
     <div class="crop-row">${cfg.frames_crop
-      ? `<span><b>Auto frames:</b> video area only <span class="state-sub">(${Math.round(cfg.frames_crop.w * 100)}% × ${Math.round(cfg.frames_crop.h * 100)}%, ${esc(cfg.frames_crop_method || '')})</span></span><span class="crop-btns"><button class="ghost-btn small" id="detectBtn">Detect again</button><button class="ghost-btn small" id="cropReset">Use whole area</button></span>`
-      : `<span class="state-sub">Auto frames use the whole area. If the video is only part of it (a browser or call window), detect it so slide changes aren't drowned out by the page.</span><button class="ghost-btn small" id="detectBtn">Detect video</button>`}</div>
+      ? `<span><b>Auto frames:</b> the framed part only <span class="state-sub" id="cropInfo">(${cropInfo(cfg)}) · drag to move, edges to resize</span></span><span class="crop-btns"><button class="ghost-btn small" id="detectBtn">Detect again</button><button class="ghost-btn small" id="cropReset">Use whole area</button></span>`
+      : `<span class="state-sub">Auto frames use the whole area. If the video is only part of it (a browser or call window), detect it so slide changes aren't drowned out by the page.</span><span class="crop-btns"><button class="ghost-btn small" id="cropHand">Set by hand</button><button class="ghost-btn small" id="detectBtn">Detect video</button></span>`}</div>
     <div class="win-list hidden" id="winList"></div>`;
   $('#detectBtn').onclick = detectVideo;
-  const cr = $('#cropReset'); if (cr) cr.onclick = async () => { try { st.capture = await api('POST', '/api/capture/crop'); await api('POST', '/api/capture/preview').then(c => { st.capture = c; }); } catch (e) { fail(e); } renderCapturePop(); };
+  const cr = $('#cropReset'); if (cr) cr.onclick = () => saveCrop(null);
+  const ch = $('#cropHand'); if (ch) ch.onclick = () => saveCrop({ x: 0.15, y: 0.15, w: 0.7, h: 0.7 });
+  bindCropEditor();
   $$('.mode', pop).forEach(b => b.onclick = () => chooseCapture(b.dataset.m));
   $('#pvRefresh').onclick = async () => { try { st.capture = await api('POST', '/api/capture/preview'); renderCapturePop(); } catch (e) { fail(e); } };
   $('#winListBtn').onclick = async () => {
@@ -1287,6 +1291,73 @@ function renderCapturePop(waiting) {
     } catch (e) { fail(e); }
   };
 }
+// ── Auto-frames crop editor (on the capture preview) ───────────────────────
+const cropInfo = cfg => `${Math.round(cfg.frames_crop.w * 100)}% × ${Math.round(cfg.frames_crop.h * 100)}%${cfg.frames_crop_method ? ', ' + esc(cfg.frames_crop_method) : ''}`;
+const CROP_HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+function cropBoxHtml(c) {
+  return `<div class="crop-box" id="cropBox" style="left:${c.x * 100}%;top:${c.y * 100}%;width:${c.w * 100}%;height:${c.h * 100}%" title="Drag to move · drag an edge or corner to resize">
+    ${CROP_HANDLES.map(h => `<span class="ch ch-${h}" data-h="${h}"></span>`).join('')}</div>`;
+}
+
+async function saveCrop(crop) {
+  try {
+    st.capture = await api('POST', '/api/capture/crop', crop ? { crop } : {});
+    if (crop && crop.w === 0.7 && crop.h === 0.7) toast('Drag the frame onto the video', 'ok');
+  } catch (e) { fail(e); }
+  renderCapturePop();
+}
+
+// Size the stage to the image as displayed (object-fit: contain), so the crop's percentages
+// line up with the picture; then let the frame be dragged and resized.
+function bindCropEditor() {
+  const img = $('#pvImg'), stage = $('#pvStage'), box = $('#pvBox');
+  if (!img || !stage) return;
+  const fit = () => {
+    if (!img.naturalWidth) return;
+    const s = Math.min(box.clientWidth / img.naturalWidth, box.clientHeight / img.naturalHeight);
+    stage.style.width = `${img.naturalWidth * s}px`;
+    stage.style.height = `${img.naturalHeight * s}px`;
+  };
+  if (img.complete) fit(); else img.onload = fit;
+  const cb = $('#cropBox'); if (!cb) return;
+  cb.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    const mode = e.target.dataset.h || 'move';
+    const r = stage.getBoundingClientRect();
+    const start = { ...st.capture.config.frames_crop };
+    const px = e.clientX, py = e.clientY;
+    cb.setPointerCapture(e.pointerId);
+    cb.classList.add('dragging');
+    let cur = start;
+    const MIN = 0.05;
+    const move = ev => {
+      const dx = (ev.clientX - px) / r.width, dy = (ev.clientY - py) / r.height;
+      let { x, y, w, h } = start;
+      if (mode === 'move') {
+        x = Math.min(Math.max(0, x + dx), 1 - w); y = Math.min(Math.max(0, y + dy), 1 - h);
+      } else {
+        if (mode.includes('w')) { const nx = Math.min(Math.max(0, x + dx), x + w - MIN); w += x - nx; x = nx; }
+        if (mode.includes('e')) w = Math.min(Math.max(MIN, w + dx), 1 - x);
+        if (mode.includes('n')) { const ny = Math.min(Math.max(0, y + dy), y + h - MIN); h += y - ny; y = ny; }
+        if (mode.includes('s')) h = Math.min(Math.max(MIN, h + dy), 1 - y);
+      }
+      cur = { x, y, w, h };
+      Object.assign(cb.style, { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` });
+      const info = $('#cropInfo'); if (info) info.textContent = `(${Math.round(w * 100)}% × ${Math.round(h * 100)}%, manual) · drag to move, edges to resize`;
+    };
+    const up = () => {
+      cb.removeEventListener('pointermove', move);
+      cb.removeEventListener('pointerup', up);
+      cb.removeEventListener('pointercancel', up);
+      cb.classList.remove('dragging');
+      if (cur !== start) saveCrop(cur);
+    };
+    cb.addEventListener('pointermove', move);
+    cb.addEventListener('pointerup', up);
+    cb.addEventListener('pointercancel', up);
+  });
+}
+
 async function detectVideo() {
   renderCapturePop('Watching the capture area for ~6 s · keep the video playing');
   try {
