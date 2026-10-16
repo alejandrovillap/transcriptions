@@ -183,7 +183,7 @@ async function loadProjects() {
 async function selectProject(name, { keepSession = false } = {}) {
   st.project = name;
   $('#projectName').textContent = name || '—';
-  if (!keepSession) { st.sid = null; st.session = null; }
+  if (!keepSession) { st.sid = null; st.session = null; resetFrames(); applyVis(null); }
   loadNotes();
   await loadSessions();
   if (!keepSession) {
@@ -206,7 +206,7 @@ async function selectSession(sid, { quiet = false } = {}) {
     st.session = await api('GET', sessUrl());
   } catch (e) { fail(e); return; }
   applyVis(st.session.visibility);
-  st.frames = { scenes: [], selection: null, stats: null, busy: false };
+  resetFrames();
   st.follow = true;
   if (!quiet) st.chat = { messages: [], busy: false };
   $('#chatDot').classList.add('hidden');
@@ -836,12 +836,16 @@ const hms = iso => (iso || '').slice(11, 19);
 const secs = (a, b) => Math.max(0, (new Date(b) - new Date(a)) / 1000);
 const fmtSceneDur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
 
+// Frames belong to one session: cleared whenever the project or session changes.
+function resetFrames() { st.frames = { scenes: [], selection: null, stats: null, busy: false }; }
+
 async function loadFrames() {
-  if (!st.project || !st.sid) { st.frames = { scenes: [], selection: null, stats: null, busy: false }; renderFrames(); return; }
+  if (!st.project || !st.sid) { resetFrames(); renderFrames(); return; }
+  const project = st.project;
   const sid = st.sid;
   try {
     const d = await api('GET', sessUrl() + '/frames');
-    if (sid !== st.sid) return;
+    if (sid !== st.sid || project !== st.project) return;   // switched meanwhile
     st.frames.scenes = d.scenes; st.frames.selection = d.selection;
   } catch (_) { st.frames.scenes = []; st.frames.selection = null; }
   st.frames.stats = isLive() ? st.recorder.frame_stats || null : null;
@@ -1261,7 +1265,12 @@ function renderCapturePop(waiting) {
     ${waiting ? `<div class="waiting"><span class="spinner"></span>${waiting}</div>` : ''}
     <div class="preview">${st.capture && st.capture.preview ? `<img src="${esc(st.capture.preview)}" alt="Capture preview">` : '<span class="state-sub">No preview yet</span>'}<span class="pv-label">${esc(label)}</span></div>
     <div class="pop-row"><button class="ghost-btn small" id="winListBtn">Choose from window list</button><button class="ghost-btn small" id="pvRefresh">Refresh preview</button></div>
+    <div class="crop-row">${cfg.frames_crop
+      ? `<span><b>Auto frames:</b> video area only <span class="state-sub">(${Math.round(cfg.frames_crop.w * 100)}% × ${Math.round(cfg.frames_crop.h * 100)}%, ${esc(cfg.frames_crop_method || '')})</span></span><span class="crop-btns"><button class="ghost-btn small" id="detectBtn">Detect again</button><button class="ghost-btn small" id="cropReset">Use whole area</button></span>`
+      : `<span class="state-sub">Auto frames use the whole area. If the video is only part of it (a browser or call window), detect it so slide changes aren't drowned out by the page.</span><button class="ghost-btn small" id="detectBtn">Detect video</button>`}</div>
     <div class="win-list hidden" id="winList"></div>`;
+  $('#detectBtn').onclick = detectVideo;
+  const cr = $('#cropReset'); if (cr) cr.onclick = async () => { try { st.capture = await api('POST', '/api/capture/crop'); await api('POST', '/api/capture/preview').then(c => { st.capture = c; }); } catch (e) { fail(e); } renderCapturePop(); };
   $$('.mode', pop).forEach(b => b.onclick = () => chooseCapture(b.dataset.m));
   $('#pvRefresh').onclick = async () => { try { st.capture = await api('POST', '/api/capture/preview'); renderCapturePop(); } catch (e) { fail(e); } };
   $('#winListBtn').onclick = async () => {
@@ -1277,6 +1286,14 @@ function renderCapturePop(waiting) {
       });
     } catch (e) { fail(e); }
   };
+}
+async function detectVideo() {
+  renderCapturePop('Watching the capture area for ~6 s · keep the video playing');
+  try {
+    st.capture = await api('POST', '/api/capture/detect-video');
+    toast('Auto frames will keep only the video area', 'ok');
+  } catch (e) { fail(e); }
+  renderCapturePop();
 }
 async function chooseCapture(mode) {
   try {
@@ -1407,7 +1424,7 @@ function addLog(line) {
 }
 
 function renderAll() {
-  renderControl(); renderTranscript(); renderShots(); renderBeautify(); renderDoc(); renderChat(); renderSessionMenu();
+  renderControl(); renderTranscript(); renderShots(); renderFrames(); renderBeautify(); renderDoc(); renderChat(); renderSessionMenu();
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────

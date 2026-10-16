@@ -251,6 +251,10 @@ How frames are filtered (`autoframes.py`, Level 0, pixels only, ~20 ms per frame
 - a candidate opens a new *scene* if its changed area differs from the current scene by more than 3%, otherwise it extends the scene (or, between 0.5% and 3%, replaces the scene's "last state" image, e.g. a form being filled in);
 - going back to a recent slide is recorded as a revisit (`same_as`), a vertically shifted frame is marked `scroll_of`.
 
+**Detect video** (capture popover). When the capture is a whole browser or call window, most of it is static page and the video is one rectangle, so slide changes look tiny and slides get merged. With the video playing, *Detect video* watches the area for ~6 s and finds the player (`video_detect.py`): a decoded video flickers by a level or two even on a still slide while a rendered page is bit-for-bit static, so the flickering blob is the video; it is snapped to the player border if one is visible, otherwise grown to a video aspect ratio and padded. A paused video is found by its border alone. The crop (`frames_crop` in the capture config, fractions of the area) applies to auto frames only; screenshots stay whole; choosing another capture area resets it.
+
+Besides the changed area, a candidate also counts as a new scene when more than half of the slide's *content* changed (a new title on a dark, almost empty slide), and drift is measured from the scene's first state too, so small steps can't add up to swallowing a slide.
+
 Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs) and shown in the transcript at the moment they appeared (marked *auto*); clicking a card in the **Frames** tab scrolls the transcript there. The transcript file itself is not changed.
 
 **Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
@@ -299,6 +303,7 @@ Key constants in `main.py`:
 | `main.py` | Main app: audio capture, VAD, transcription, screenshot integration |
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
 | `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
+| `video_detect.py` | Find the playing video in a captured window (crop for auto frames) |
 | `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
 | `select_frames.py` | Score scenes against the transcript, keep the best N visible (hide the rest) |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |

@@ -21,6 +21,8 @@ import CoreGraphics
 //   {"mode": "full"}
 //   {"mode": "region", "rect": {"x":..,"y":..,"w":..,"h":..}}   global coords, points, top-left origin
 //   {"mode": "window", "windowId": 123, "owner": "Microsoft Teams", "title": "..."}
+//   Optional "frames_crop": {"x":..,"y":..,"w":..,"h":..} in fractions of the captured image
+//   (set by "Detect video"): automatic frames keep only that part. Screenshots stay whole.
 
 var gScreenshotDir = ""
 var gConfigPath: String? = nil
@@ -33,6 +35,7 @@ struct CaptureConfig {
     var windowID: CGWindowID = 0
     var owner = ""
     var title = ""
+    var framesCrop: CGRect? = nil     // fractions of the captured image
 }
 
 func num(_ v: Any?) -> CGFloat {
@@ -53,6 +56,10 @@ func loadConfig(_ path: String?) -> CaptureConfig {
     c.windowID = CGWindowID(num(obj["windowId"]))
     c.owner = obj["owner"] as? String ?? ""
     c.title = obj["title"] as? String ?? ""
+    if let r = obj["frames_crop"] as? [String: Any] {
+        let f = CGRect(x: num(r["x"]), y: num(r["y"]), width: num(r["w"]), height: num(r["h"]))
+        if f.width > 0.02 && f.height > 0.02 { c.framesCrop = f }
+    }
     return c
 }
 
@@ -214,9 +221,16 @@ func takeFrame() {
     let formatter = DateFormatter()
     formatter.dateFormat = "yyyyMMdd_HHmmss_SSS"
     let path = (dir as NSString).appendingPathComponent("frame_\(formatter.string(from: Date())).jpg")
-    guard let (image, _) = captureImage(loadConfig(gConfigPath)) else {
+    let config = loadConfig(gConfigPath)
+    guard var (image, _) = captureImage(config) else {
         fputs("[screenshot-helper] frame capture failed\n", stderr)
         return
+    }
+    if let f = config.framesCrop {
+        let w = CGFloat(image.width), h = CGFloat(image.height)
+        let px = CGRect(x: f.minX * w, y: f.minY * h, width: f.width * w, height: f.height * h)
+            .integral.intersection(CGRect(x: 0, y: 0, width: w, height: h))
+        if px.width >= 16, px.height >= 16, let cropped = image.cropping(to: px) { image = cropped }
     }
     if writeJPEG(image, path) {
         print("FRAME:\(path)")

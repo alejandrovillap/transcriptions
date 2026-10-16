@@ -582,3 +582,7 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .frame-inline { border-style: dotted; }
 .frame-inline .lbl b::after { content: "auto"; margin-left: 6px; font-size: 10px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
 .row > .body { padding-right: 30px; }
+.crop-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 12.5px; }
+.crop-row .state-sub { font-size: 12px; }
+.crop-btns { display: flex; gap: 6px; flex: none; }
+.crop-row .ghost-btn { white-space: nowrap; flex: none; }

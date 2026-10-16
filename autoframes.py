@@ -51,6 +51,8 @@ class Params:
     stable_sec: float = 1.5     # still this long after a change → candidate
     scene_frac: float = 0.03    # candidate's changed area vs the scene above this → new scene
     drift_frac: float = 0.005   # …above this (but less than scene_frac) → keep as the scene's "last" state
+    sparse_rel: float = 0.5     # …or more than this share of the slide's content changed (sparse
+    sparse_min: float = 0.004   #    slides: a new title on a dark slide is < 3% of the frame), if ≥ sparse_min
     motion_window_sec: float = 10.0   # motion history used to find constantly moving regions
     motion_hot: float = 0.3     # pixel moved in ≥ this share of recent frames → masked
     motion_min_frames: int = 4  # history needed before the mask is used
@@ -99,6 +101,28 @@ def area(moved: np.ndarray | None, mask: np.ndarray | None = None) -> float:
     if moved is None:
         return 1.0
     return frac(cv2.dilate(moved.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0, mask)
+
+
+def content_mask(small: np.ndarray) -> np.ndarray:
+    """What's drawn on the slide: pixels clearly off the background (the most common level)."""
+    bg = int(np.median(small))
+    return cv2.dilate((cv2.absdiff(small, np.full_like(small, bg)) > 25).astype(np.uint8),
+                      np.ones((5, 5), np.uint8)) > 0
+
+
+def content_change(a: np.ndarray, b: np.ndarray, thresh: int, mask: np.ndarray | None) -> float:
+    """Share of the slides' content (union of both) that changed — 1.0 if shapes differ."""
+    moved = changed_map(a, b, thresh)
+    if moved is None:
+        return 1.0
+    content = content_mask(a) | content_mask(b)
+    if mask is not None:
+        content &= ~mask
+    n = int(content.sum())
+    if n == 0:
+        return 0.0
+    moved = cv2.dilate(moved.astype(np.uint8), np.ones((5, 5), np.uint8)) > 0
+    return float((moved & content).sum() / n)
 
 
 def edge_density(small: np.ndarray) -> float:
@@ -240,7 +264,8 @@ class FrameTriage:
         self.history: deque = deque()   # (t, moved map)
         self.current: Scene | None = None     # last accepted scene (novelty reference)
         self.on_screen: Scene | None = None   # scene currently shown (None after a dropped candidate)
-        self.current_small: np.ndarray | None = None
+        self.current_small: np.ndarray | None = None   # latest state of the current scene
+        self.first_small: np.ndarray | None = None     # its first state: drift is measured from here too
         self.recent: deque = deque(maxlen=self.p.revisit_depth)   # (scene, small)
         self.stats = {"frames": 0, "candidates": 0, "scenes": 0, "revisits": 0, "drifts": 0,
                       "dropped": 0, "video": 0, "state": "idle", "mask": 0.0}
@@ -330,12 +355,26 @@ class FrameTriage:
         self._stats(mask_frac)
         return kept
 
+    def _differs(self, ref: np.ndarray, small: np.ndarray, mask) -> tuple[bool, float, float]:
+        """(is a different scene, changed area, share of the content that changed)."""
+        p = self.p
+        novelty = area(changed_map(ref, small, p.pix_thresh), mask)
+        rel = content_change(ref, small, p.pix_thresh, mask) if novelty > p.sparse_min else 0.0
+        return novelty > p.scene_frac or rel > p.sparse_rel, novelty, rel
+
     def _decide(self, t, small, path, image, mask, mask_frac) -> bool:
         p = self.p
         t0 = self.still_since
+        rel = 0.0
         if self.current is not None:
-            novelty = area(changed_map(self.current_small, small, p.pix_thresh), mask)
-            if novelty <= p.scene_frac:
+            new_vs_last, novelty, rel = self._differs(self.current_small, small, mask)
+            # Small steps add up (A → A′ → A″): compare with the scene's first state as well,
+            # so a slide is never lost by being "drifted" into the next one.
+            new_vs_first = False
+            if not new_vs_last and self.first_small is not None and self.first_small is not self.current_small:
+                new_vs_first, _, rel_first = self._differs(self.first_small, small, mask)
+                rel = max(rel, rel_first)
+            if not (new_vs_last or new_vs_first):
                 if novelty > p.drift_frac:
                     # Same scene, but it has changed a bit (form filled in, cursor moved a lot…):
                     # keep the latest such state as the scene's "last" image.
@@ -351,7 +390,7 @@ class FrameTriage:
         for sc, sm in reversed(self.recent):
             if sc is self.current:
                 continue
-            if area(changed_map(sm, small, p.pix_thresh), mask) <= p.scene_frac:
+            if not self._differs(sm, small, mask)[0]:
                 return self._revisit(sc, t, t0, small, novelty, mask_frac)
 
         edges = edge_density(small)
@@ -369,6 +408,8 @@ class FrameTriage:
                 return False
 
         dup = info.get("dup_of")
+        if dup is not None and rel > p.sparse_rel:
+            dup = None     # the text changed: look-alike to CLIP (dark title slides), but a new slide
         if dup is not None:
             # A filter says the content is a scene we already have (pixels moved, meaning didn't).
             self.stats["semantic_dups"] = self.stats.get("semantic_dups", 0) + 1
@@ -392,7 +433,7 @@ class FrameTriage:
                            scroll_of=scroll_of, cls=info.get("cls", ""),
                            cls_score=info.get("cls_score", 0.0), extra=info.get("extra", {}))
         self.current = self.on_screen = s
-        self.current_small = small
+        self.current_small = self.first_small = small
         self.recent.append((s, small))
         self.stats["scenes"] += 1
         for flt in self.filters:
@@ -427,7 +468,7 @@ class FrameTriage:
                            cls=sc.cls, cls_score=sc.cls_score, ocr=sc.ocr, caption=sc.caption,
                            title=sc.title)
         self.current = self.on_screen = s
-        self.current_small = small
+        self.current_small = self.first_small = small
         self.recent.append((s, small))
         self.stats["revisits"] += 1
         self._notify(s, "revisit")
