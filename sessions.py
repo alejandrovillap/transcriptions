@@ -32,6 +32,7 @@ DEFAULT_SETTINGS = {
     "minutes": 180,
     "pause": 1.5,
     "save_audio": False,
+    "auto_frames": False,             # automatic screen frames (autoframes.py) from the start
     "recorder_python": "",            # empty = same interpreter as server.py
     "last_project": "",
 }

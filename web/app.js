@@ -24,6 +24,7 @@ const st = {
   claude: true,
   unreadChat: false,
   notes: { text: '', dirty: false, path: '' },
+  frames: { scenes: [], selection: null, stats: null, busy: false },
   starting: false,
 };
 const CLIENT_ID = Math.random().toString(36).slice(2);
@@ -207,6 +208,7 @@ async function selectSession(sid, { quiet = false } = {}) {
   $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(sid))}` : esc(sidLabel(sid));
   renderAll();
   loadChat();
+  loadFrames();
 }
 
 async function reloadSession() {
@@ -216,6 +218,7 @@ async function reloadSession() {
     $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(st.sid))}` : esc(sidLabel(st.sid));
     renderTranscript(); renderShots(); renderBeautify(); renderDoc();
     if (!recActive()) renderControl();
+    loadFrames();
   } catch (e) { /* ignore */ }
 }
 
@@ -314,6 +317,7 @@ function renderControl() {
         <div class="opt"><span class="opt-label">Auto-stop</span><input class="field num" id="minInp" type="number" min="1" value="${s.minutes || 180}"> min</div>
         ${pauseControl(s.pause || 1.5)}
         <label class="switch opt"><input type="checkbox" id="audioChk" ${s.save_audio ? 'checked' : ''}><span class="knob"></span>Save audio</label>
+        <label class="switch opt" title="Capture the screen every second and keep the frames that show something new"><input type="checkbox" id="autoChk" ${s.auto_frames ? 'checked' : ''}><span class="knob"></span>Auto frames</label>
       </div>`;
     $('#recBtn').onclick = startRecording;
     const nb = $('#newSessBtn'); if (nb) nb.onclick = newSession;
@@ -326,6 +330,7 @@ function renderControl() {
     $('#spkSel').onchange = e => { st.settings.speakers = e.target.value; };
     $('#minInp').onchange = e => { st.settings.minutes = +e.target.value || 180; };
     $('#audioChk').onchange = e => { st.settings.save_audio = e.target.checked; };
+    $('#autoChk').onchange = e => { st.settings.auto_frames = e.target.checked; };
     bindPause();
     return;
   }
@@ -364,7 +369,9 @@ function renderControl() {
     ${r.diarization ? '<span class="chip" title="Speaker diarization runs after the session">SPEAKERS</span>' : ''}
     <div class="spacer"></div>
     ${!mine ? `<span class="state-sub">Recording in <b>${esc(r.project)}</b></span>` : ''}
+    <button class="ghost-btn auto-btn${r.auto_frames ? ' on' : ''}" id="autoBtn" title="${r.auto_frames ? 'Stop automatic frames' : 'Capture the screen every second and keep the frames that show something new'}"><span class="auto-dot"></span>Auto${r.auto_frames && r.frame_stats && r.frame_stats.scenes != null ? ` · ${r.frame_stats.scenes}` : ''}</button>
     <button class="ghost-btn" id="snapBtn" title="Take a screenshot of the capture area">${ICON.camera}Snap</button>`;
+  $('#autoBtn').onclick = toggleAutoFrames;
   $('#recBtn').onclick = stopRecording;
   $('#muteBtn').onclick = toggleMute;
   $('#snapBtn').onclick = snap;
@@ -377,6 +384,7 @@ function newSession() {
   st.sid = null; st.session = null; st.chat = { messages: [], busy: false };
   $('#sessionName').textContent = 'New session';
   renderAll();
+  loadFrames();
 }
 
 function pauseControl(v) {
@@ -507,7 +515,7 @@ async function startRecording() {
     }
     await api('POST', '/api/record/start', {
       project: st.project, engine, lang: s.lang || 'auto', speakers: s.speakers || 'auto',
-      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio,
+      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio, auto_frames: !!s.auto_frames,
       continue_sid: st.sid && st.session && !st.session.live ? st.sid : '',
     });
   } catch (e) { st.starting = false; renderControl(); fail(e); }
@@ -522,6 +530,12 @@ async function toggleMute() {
   const muted = !st.recorder.muted;
   const btn = $('#muteBtn'); if (btn) btn.disabled = true;
   try { await api('POST', '/api/record/mute', { muted }); }
+  catch (e) { fail(e); if (btn) btn.disabled = false; }
+}
+async function toggleAutoFrames() {
+  const on = !st.recorder.auto_frames;
+  const btn = $('#autoBtn'); if (btn) btn.disabled = true;
+  try { await api('POST', '/api/record/auto', { on }); st.settings.auto_frames = on; }
   catch (e) { fail(e); if (btn) btn.disabled = false; }
 }
 async function snap() { try { await api('POST', '/api/record/snap'); } catch (e) { fail(e); } }
@@ -744,6 +758,152 @@ async function openLightbox(path) {
   }
 }
 function closeLightbox() { $('#lightbox').classList.add('hidden'); }
+
+// ── Auto frames ────────────────────────────────────────────────────────────
+// Scenes come from autoframes.py (live: 'frame' events; saved: frames/<sid>/scenes.json).
+// A revisit (same_as) is the same image shown again: counted on its original card.
+const hms = iso => (iso || '').slice(11, 19);
+const secs = (a, b) => Math.max(0, (new Date(b) - new Date(a)) / 1000);
+const fmtSceneDur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+
+async function loadFrames() {
+  if (!st.project || !st.sid) { st.frames = { scenes: [], selection: null, stats: null, busy: false }; renderFrames(); return; }
+  const sid = st.sid;
+  try {
+    const d = await api('GET', sessUrl() + '/frames');
+    if (sid !== st.sid) return;
+    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+  } catch (_) { st.frames.scenes = []; st.frames.selection = null; }
+  st.frames.stats = isLive() ? st.recorder.frame_stats || null : null;
+  renderFrames();
+}
+
+function upsertFrame(scene) {
+  const list = st.frames.scenes;
+  const i = list.findIndex(s => s.id === scene.id);
+  if (i >= 0) list[i] = { ...list[i], ...scene }; else list.push(scene);
+  renderFrames();
+}
+
+function frameGroups() {
+  const byId = new Map();
+  for (const s of st.frames.scenes) {
+    if (s.same_as) continue;
+    byId.set(s.id, { scene: s, shows: 1, duration: secs(s.wall_start, s.wall_end) });
+  }
+  for (const s of st.frames.scenes) {
+    const g = s.same_as && byId.get(s.same_as);
+    if (g) { g.shows++; g.duration += secs(s.wall_start, s.wall_end); }
+  }
+  return [...byId.values()];
+}
+
+function renderFramesBar() {
+  const bar = $('#framesBar');
+  const live = isLive();
+  const stats = st.frames.stats;
+  const n = frameGroups().length;
+  const sel = st.frames.scenes.filter(s => s.selected && !s.same_as);
+  const pending = sel.filter(s => !(s.extra && s.extra.promoted));
+  let html = '';
+  if (live) {
+    const on = st.recorder.auto_frames;
+    html = `<div class="fb-stats">${on ? '<span class="auto-dot live"></span>' : ''}${stats
+      ? `<b>${stats.frames}</b> frames → <b>${stats.scenes}</b> scenes${stats.revisits ? ` · ${stats.revisits} repeats` : ''} · <span class="fb-state">${esc(stats.state)}</span>`
+      : on ? 'Watching the screen…' : 'Auto frames are off'}</div>
+      ${st.recorder.state === 'listening' ? `<button class="ghost-btn small" id="fbAuto">${on ? 'Stop' : 'Start'} auto frames</button>` : ''}`;
+  } else if (n) {
+    const lastN = (st.frames.selection && st.frames.selection.n) || 10;
+    html = `<div class="fb-stats"><b>${n}</b> scenes${sel.length ? ` · <b>${sel.length}</b> picked` : ''}</div>
+      <div class="fb-actions"><label class="fb-n">Top <input class="field num" id="fbN" type="number" min="1" max="100" value="${lastN}"></label>
+      <button class="ghost-btn small" id="fbPick" ${st.frames.busy ? 'disabled' : ''} title="Score scenes by what was said while they were on screen">${ICON.sparkle}Pick</button>
+      ${pending.length ? `<button class="primary-btn fb-add" id="fbAdd" ${st.frames.busy ? 'disabled' : ''} title="Insert the picked frames into the transcript as screenshots (with OCR)">Add ${pending.length} to transcript</button>` : ''}</div>`;
+  }
+  bar.innerHTML = html;
+  bar.classList.toggle('hidden', !html);
+  const a = $('#fbAuto'); if (a) a.onclick = toggleAutoFrames;
+  const p = $('#fbPick'); if (p) p.onclick = pickFrames;
+  const add = $('#fbAdd'); if (add) add.onclick = () => promoteFrames(pending.map(s => s.id));
+}
+
+function frameCardHtml(g) {
+  const s = g.scene;
+  const url = s.last_url || s.url;
+  const promoted = s.extra && s.extra.promoted;
+  const tags = [];
+  if (g.shows > 1) tags.push(`<span class="ftag" title="Shown ${g.shows} times">×${g.shows}</span>`);
+  if (s.last_path) tags.push('<span class="ftag" title="Changed while on screen; the card shows the last state">updated</span>');
+  if (s.scroll_of) tags.push(`<span class="ftag" title="Looks like a scrolled #${s.scroll_of}">scroll</span>`);
+  if (s.features && s.features.deixis) tags.push(`<span class="ftag hot" title="${esc((s.deixis || []).join(' · '))}">“${s.features.deixis} pointer${s.features.deixis > 1 ? 's' : ''}”</span>`);
+  return `<div class="frame-card${s.selected ? ' picked' : ''}${promoted ? ' promoted' : ''}" data-id="${s.id}">
+    <div class="thumb" data-fid="${s.id}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
+    <div class="shot-meta"><div class="top"><span class="time">${esc(hms(s.wall_start))}</span><span class="name">#${s.id} · ${fmtSceneDur(g.duration)}${s.score != null ? ` · score ${s.score.toFixed(1)}` : ''}</span></div>
+    <div class="ftags">${tags.join('')}</div>
+    ${isLive() ? '' : promoted ? '<div class="fstate">✓ In transcript</div>' : `<button class="link-btn" data-promote="${s.id}">Add to transcript</button>`}</div></div>`;
+}
+
+function renderFrames() {
+  const groups = frameGroups();
+  $('#frameCount').textContent = groups.length || '';
+  renderFramesBar();
+  const box = $('#frames');
+  if (!groups.length) {
+    box.innerHTML = `<div class="empty"><div class="art">${ICON.camera}</div><h3>No auto frames</h3><p>Turn on <b>Auto frames</b> before or during a recording. The screen is captured every second; only frames that show something new and stay still are kept, talking heads and transitions are skipped.</p></div>`;
+    return;
+  }
+  if (isLive()) groups.reverse();
+  box.innerHTML = groups.map(frameCardHtml).join('');
+}
+
+async function pickFrames() {
+  const n = +($('#fbN') && $('#fbN').value) || 10;
+  st.frames.busy = true; renderFramesBar();
+  try {
+    const d = await api('POST', sessUrl() + '/frames/select', { n });
+    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+  } catch (e) { fail(e); }
+  st.frames.busy = false; renderFrames();
+}
+
+async function promoteFrames(ids) {
+  if (!ids.length) return;
+  st.frames.busy = true; renderFramesBar();
+  $$('#frames [data-promote]').forEach(b => { if (ids.includes(+b.dataset.promote)) { b.disabled = true; b.textContent = 'Adding…'; } });
+  try {
+    const d = await api('POST', sessUrl() + '/frames/promote', { ids });
+    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+    toast(`${ids.length} frame${ids.length > 1 ? 's' : ''} added to the transcript`, 'ok');
+  } catch (e) { fail(e); }
+  st.frames.busy = false; renderFrames();
+}
+
+$('#frames').addEventListener('click', e => {
+  const pr = e.target.closest('[data-promote]');
+  if (pr) { promoteFrames([+pr.dataset.promote]); return; }
+  const t = e.target.closest('.thumb[data-fid]'); if (t) openFrameLightbox(+t.dataset.fid);
+});
+
+function openFrameLightbox(id) {
+  const s = st.frames.scenes.find(x => x.id === id); if (!s) return;
+  const lb = $('#lightbox');
+  const f = s.features;
+  const info = [
+    `Shown ${hms(s.wall_start)}–${hms(s.wall_end)}`,
+    s.changed != null ? `${Math.round(s.changed * 100)}% different from the previous scene` : '',
+    s.mask_frac ? `${Math.round(s.mask_frac * 100)}% masked as moving (webcam)` : '',
+    f ? `${f.words} words spoken · ${f.deixis} pointing phrase${f.deixis === 1 ? '' : 's'}${s.deixis && s.deixis.length ? ': ' + s.deixis.join(' · ') : ''}` : '',
+    s.caption || '', s.ocr ? 'OCR:\n' + s.ocr : '',
+  ].filter(Boolean).join('\n');
+  const urls = [s.url, s.last_url].filter(Boolean);
+  lb.innerHTML = `<div class="lb-img${urls.length > 1 ? ' two' : ''}">${urls.map(u => `<img src="${esc(u)}" alt="">`).join('')}</div>
+    <div class="lb-side"><div class="lb-head"><div><b>${esc(hms(s.wall_start))}</b> <span style="color:#6b7480;font-size:12px">frame #${s.id}${s.last_url ? ' · first and last state' : ''}</span></div>
+    <div style="display:flex;gap:6px"><button class="ghost-btn small" id="lbJump">Find in transcript</button><button class="ghost-btn small" id="lbClose">Close</button></div></div>
+    <div class="lb-ocr">${esc(info)}</div></div>`;
+  lb.classList.remove('hidden');
+  $('#lbClose').onclick = closeLightbox;
+  $('#lbJump').onclick = () => { closeLightbox(); jumpToTime(hms(s.wall_start)); };
+  lb.onclick = e => { if (e.target === lb || e.target.classList.contains('lb-img')) closeLightbox(); };
+}
 
 // ── Beautify ───────────────────────────────────────────────────────────────
 const currentJob = () => (st.project && st.sid) ? st.jobs[key(st.project, st.sid)] : null;
@@ -1119,6 +1279,7 @@ function switchSide(side) {
   $$('#sideTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.side === side));
   $('#side-shots').classList.toggle('hidden', side !== 'shots');
   $('#side-chat').classList.toggle('hidden', side !== 'chat');
+  $('#side-frames').classList.toggle('hidden', side !== 'frames');
   $('#side-notes').classList.toggle('hidden', side !== 'notes');
   $('#notesState').classList.toggle('hidden', side !== 'notes');
   if (side === 'chat') { $('#chatDot').classList.add('hidden'); renderChat(); setTimeout(() => $('#chatInput').focus(), 0); }
@@ -1203,6 +1364,14 @@ async function handle(m) {
       break;
     case 'log':
       addLog(m.line);
+      break;
+    case 'frame':
+      if (m.project === st.project && m.sid === st.sid) upsertFrame(m.scene);
+      break;
+    case 'frame_stats':
+      st.recorder.frame_stats = m;
+      if (m.project === st.project && m.sid === st.sid) { st.frames.stats = m; renderFramesBar(); }
+      { const b = $('#autoBtn'); if (b && st.recorder.auto_frames) b.lastChild.textContent = `Auto · ${m.scenes}`; }
       break;
     case 'session_changed':
       if (m.project === st.project) {

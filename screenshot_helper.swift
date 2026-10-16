@@ -9,6 +9,9 @@ import CoreGraphics
 //       Daemon: global hotkeys (Ctrl+Shift+S screenshot, Ctrl+Shift+W selection).
 //       Also accepts "SNAP" lines on stdin. The capture config is re-read on every
 //       screenshot, so the capture area can be changed while recording.
+//       "AUTO <seconds>" starts automatic frames: every <seconds> a JPEG of the capture
+//       area goes to <output-dir>/.frames/ and "FRAME:<path>" is printed (no flash).
+//       "AUTO OFF" stops them. main.py decides which frames are worth keeping.
 //   screenshot_helper --select-region     Drag-select overlay → prints REGION:{json}
 //   screenshot_helper --pick-window       Click-a-window overlay → prints WINDOW:{json}
 //   screenshot_helper --list-windows      Prints on-screen windows as a JSON array
@@ -116,6 +119,15 @@ func captureImage(_ c: CaptureConfig) -> (CGImage, CGRect)? {
     return (img, CGDisplayBounds(CGMainDisplayID()))
 }
 
+func writeJPEG(_ image: CGImage, _ path: String, quality: Double = 0.85) -> Bool {
+    let url = URL(fileURLWithPath: path)
+    guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.jpeg" as CFString, 1, nil) else {
+        return false
+    }
+    CGImageDestinationAddImage(dest, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+    return CGImageDestinationFinalize(dest)
+}
+
 func writePNG(_ image: CGImage, _ path: String) -> Bool {
     let url = URL(fileURLWithPath: path)
     guard let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil) else {
@@ -184,6 +196,48 @@ func takeScreenshot() {
         flash(rect)
     } else {
         fputs("[screenshot-helper] failed to write PNG\n", stderr)
+    }
+}
+
+// ── Automatic frames ("AUTO <seconds>" on stdin) ────────────────────────────
+
+let gFrameQueue = DispatchQueue(label: "auto-frames", qos: .utility)
+var gFrameTimer: DispatchSourceTimer? = nil
+var gFrameBusy = false   // touched only on gFrameQueue
+
+func takeFrame() {
+    if gFrameBusy { return }    // previous capture still running: skip this tick
+    gFrameBusy = true
+    defer { gFrameBusy = false }
+    let dir = (gScreenshotDir as NSString).appendingPathComponent(".frames")
+    try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+    let formatter = DateFormatter()
+    formatter.dateFormat = "yyyyMMdd_HHmmss_SSS"
+    let path = (dir as NSString).appendingPathComponent("frame_\(formatter.string(from: Date())).jpg")
+    guard let (image, _) = captureImage(loadConfig(gConfigPath)) else {
+        fputs("[screenshot-helper] frame capture failed\n", stderr)
+        return
+    }
+    if writeJPEG(image, path) {
+        print("FRAME:\(path)")
+        fflush(stdout)
+    }
+}
+
+func setAutoFrames(_ interval: Double?) {
+    gFrameQueue.async {
+        gFrameTimer?.cancel()
+        gFrameTimer = nil
+        guard let iv = interval, iv > 0 else {
+            fputs("[screenshot-helper] auto frames off\n", stderr)
+            return
+        }
+        let t = DispatchSource.makeTimerSource(queue: gFrameQueue)
+        t.schedule(deadline: .now(), repeating: iv, leeway: .milliseconds(50))
+        t.setEventHandler { takeFrame() }
+        t.resume()
+        gFrameTimer = t
+        fputs("[screenshot-helper] auto frames every \(iv)s\n", stderr)
     }
 }
 
@@ -509,14 +563,18 @@ RegisterEventHotKey(
     &hotKeyRef2
 )
 
-// stdin commands (used by main.py --control-stdin): "SNAP" takes a screenshot.
+// stdin commands from main.py: "SNAP" takes a screenshot, "AUTO <sec>" / "AUTO OFF" auto frames.
 DispatchQueue.global(qos: .userInitiated).async {
     while let line = readLine() {
         let cmd = line.trimmingCharacters(in: .whitespacesAndNewlines)
         if cmd == "SNAP" {
             DispatchQueue.main.async { takeScreenshot() }
+        } else if cmd.hasPrefix("AUTO") {
+            let arg = cmd.dropFirst(4).trimmingCharacters(in: .whitespaces)
+            setAutoFrames(arg.uppercased() == "OFF" ? nil : (Double(arg) ?? 1.0))
         }
     }
+    setAutoFrames(nil)
 }
 
 fputs("Helper ready (Ctrl+Shift+S: screenshot, Ctrl+Shift+W: selection)\n", stderr)

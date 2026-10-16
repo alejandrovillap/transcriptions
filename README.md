@@ -236,6 +236,35 @@ python bench_asr.py projects/myproject/recording_20261007_083740.mp3 --start 60 
 
 `--ref` is a hand-corrected transcript of the same range; with it the script reports WER/CER. Per-engine transcripts go to `bench_out/`.
 
+## Auto frames
+
+Instead of (or besides) pressing the hotkey, the screen can be captured every second and only the frames worth keeping are stored. Turn it on with `--auto-frames 1`, the **Auto frames** switch before recording, or the **Auto** button while recording.
+
+```bash
+python main.py myproject 60 --auto-frames 1
+```
+
+How frames are filtered (`autoframes.py`, Level 0, pixels only, ~20 ms per frame):
+
+- a frame becomes a candidate only after the screen has stood still for 1.5 s after a change, so transitions, scrolling in progress, typing and talking heads never qualify;
+- regions that keep moving (a webcam picture-in-picture) are masked out; a mostly-moving frame is treated as video and skipped; a still frame with motion and little detail elsewhere is treated as a camera view and skipped;
+- a candidate opens a new *scene* if its changed area differs from the current scene by more than 3%, otherwise it extends the scene (or, between 0.5% and 3%, replaces the scene's "last state" image, e.g. a form being filled in);
+- going back to a recent slide is recorded as a revisit (`same_as`), a vertically shifted frame is marked `scroll_of`.
+
+Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs). They are **not** written into the transcript; they are matched to speech by time. In the **Frames** tab, **Pick** scores scenes by what was said while they were on screen (pointing phrases like "вот здесь", "as you can see", duration, words, novelty) and marks the top N; **Add to transcript** turns them into regular screenshots (PNG, OCR, `[screenshot: …]` line at their own time), so Beautify and chat treat them like hand-made ones. The same from the console:
+
+```bash
+python select_frames.py myproject 20261016_120000 -n 10 --promote --ocr
+```
+
+To tune thresholds on a recorded talk (and measure recall against hand-made screenshots of it):
+
+```bash
+python autoframes.py talk.mp4 --out /tmp/frames [--truth projects/x/screenshots] [--scene-frac 0.03 ...]
+```
+
+It writes `index.html` with every scene for a quick look. Planned: Level 1 (image embeddings: semantic dedup, face/slide/code classes) as a `FrameFilter`, Level 2 (OCR + VLM caption) as an `Enricher`, and a final pick by a text LLM over the transcript and scene list.
+
 ## Configuration
 
 Key constants in `main.py`:
@@ -256,6 +285,8 @@ Key constants in `main.py`:
 |---|---|
 | `main.py` | Main app: audio capture, VAD, transcription, screenshot integration |
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
+| `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
+| `select_frames.py` | Score scenes against the transcript, pick the top N, promote them to screenshots |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |
 | `screenshot_helper.swift` | Native macOS helper for global hotkeys and screen capture |
 | `speaker_id.py` | Speaker embedding (ECAPA-TDNN) and agglomerative clustering |

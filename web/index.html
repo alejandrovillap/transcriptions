@@ -67,6 +67,7 @@
       <div class="panel-head">
         <div class="tabs" id="sideTabs">
           <button class="tab active" data-side="shots">Screenshots <span class="tab-count" id="shotCount"></span></button>
+          <button class="tab" data-side="frames" title="Automatic screen frames">Frames <span class="tab-count" id="frameCount"></span></button>
           <button class="tab" data-side="chat">Ask <span class="tab-dot hidden" id="chatDot"></span></button>
           <button class="tab" data-side="notes">Notes <span class="tab-count" id="notesCount"></span></button>
         </div>
@@ -79,6 +80,11 @@
 
       <div class="side-body" id="side-shots">
         <div class="shots" id="shots"></div>
+      </div>
+
+      <div class="side-body hidden" id="side-frames">
+        <div class="frames-bar" id="framesBar"></div>
+        <div class="frames" id="frames"></div>
       </div>
 
       <div class="side-body hidden" id="side-chat">

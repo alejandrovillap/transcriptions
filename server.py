@@ -32,6 +32,7 @@ from fastapi.staticfiles import StaticFiles
 
 import beautify
 import claude_cli
+import select_frames as SF
 import sessions as S
 
 ENGINES = ("whisper", "gigaam", "parakeet")   # main.py --engine (see asr_engines.py)
@@ -104,6 +105,8 @@ class Recorder:
         self.options: dict = {}
         self.deleted: set[str] = set()
         self.muted = False
+        self.auto_frames = False
+        self.frame_stats: dict = {}
         self.session_start: datetime | None = None
         # speech = seconds of the phrase being recorded (None = silence);
         # current = chunk Whisper is working on; pending = chunks waiting in the queue
@@ -119,7 +122,7 @@ class Recorder:
             "started_at": self.started_at, "listening_at": self.listening_at, "lang": self.lang,
             "engine": self.engine, "diarization": self.diarization, "error": self.error, "active": self.active,
             "activity": self.activity, "options": self.options, "pipeline": self.pipeline,
-            "muted": self.muted,
+            "muted": self.muted, "auto_frames": self.auto_frames, "frame_stats": self.frame_stats,
             "minutes": self.options.get("minutes"),
         }
 
@@ -172,6 +175,8 @@ class Recorder:
             self.diarization = True
         if opts.get("save_audio"):
             cmd.append("--save-audio")
+        if opts.get("auto_frames"):
+            cmd += ["--auto-frames", "1"]
         continue_sid = (opts.get("continue_sid") or "").strip()
         if continue_sid:
             if not S.transcript_path(project, continue_sid).exists():
@@ -191,7 +196,8 @@ class Recorder:
             stderr=asyncio.subprocess.STDOUT, start_new_session=True,
             env={**os.environ, "PYTHONUNBUFFERED": "1"}, limit=STREAM_LIMIT)
         S.save_settings({"last_project": project, **{k: opts[k] for k in
-                         ("engine", "lang", "speakers", "minutes", "pause", "save_audio") if k in opts}})
+                         ("engine", "lang", "speakers", "minutes", "pause", "save_audio", "auto_frames")
+                         if k in opts}})
         self.set_state("loading", "Starting recognizer")
         loop = asyncio.get_running_loop()
         loop.create_task(self._read_output())
@@ -288,6 +294,12 @@ class Recorder:
         self.proc.stdin.write(b"MUTE\n" if muted else b"UNMUTE\n")
         await self.proc.stdin.drain()
 
+    async def set_auto_frames(self, on: bool):
+        if not self.active or self.state != "listening":
+            raise HTTPException(409, "Not recording")
+        self.proc.stdin.write(b"AUTO ON\n" if on else b"AUTO OFF\n")
+        await self.proc.stdin.drain()
+
     async def set_pause(self, seconds: float):
         if not self.active:
             return
@@ -356,6 +368,17 @@ class Recorder:
             shot["ocr_chars"] = ev.get("chars", 0)
             shot["ocr_error"] = ev.get("message") if t == "ocr_error" else None
             self._emit_shot(shot)
+        elif t == "auto_frames":
+            self.auto_frames = bool(ev.get("on"))
+            hub.emit({"type": "recorder", **self.snapshot()})
+        elif t == "frame_scene":
+            scene = {k: v for k, v in ev.items() if k not in ("type", "ts")}
+            scene["url"] = S.file_url(ev["path"])
+            scene["last_url"] = S.file_url(ev["last_path"]) if ev.get("last_path") else None
+            hub.emit({"type": "frame", "project": self.project, "sid": self.sid, "scene": scene})
+        elif t == "frame_stats":
+            self.frame_stats = {k: v for k, v in ev.items() if k not in ("type", "ts")}
+            hub.emit({"type": "frame_stats", "project": self.project, "sid": self.sid, **self.frame_stats})
         elif t == "lang":
             self.lang = ev.get("lang", "")
             hub.emit({"type": "recorder", **self.snapshot()})
@@ -934,6 +957,47 @@ async def record_mute(data: dict = Body(...)):
 async def record_snap():
     await recorder.snap()
     return {"ok": True}
+
+
+@app.post("/api/record/auto")
+async def record_auto(data: dict = Body(...)):
+    on = bool(data.get("on"))
+    await recorder.set_auto_frames(on)
+    S.save_settings({"auto_frames": on})
+    return {"ok": True}
+
+
+# Auto frames (autoframes.py / select_frames.py)
+
+@app.get("/api/projects/{project}/sessions/{sid}/frames")
+async def frames_get(project: str, sid: str):
+    return SF.frames_payload(S.safe_name(project), S.safe_name(sid))
+
+
+@app.post("/api/projects/{project}/sessions/{sid}/frames/select")
+async def frames_select(project: str, sid: str, data: dict = Body(default={})):
+    project, sid = S.safe_name(project), S.safe_name(sid)
+    n = max(1, min(100, int(data.get("n") or 10)))
+    await asyncio.to_thread(SF.select, project, sid, n)
+    return SF.frames_payload(project, sid)
+
+
+@app.post("/api/projects/{project}/sessions/{sid}/frames/promote")
+async def frames_promote(project: str, sid: str, data: dict = Body(...)):
+    """Make scenes regular screenshots: PNG + OCR + a line in the transcript."""
+    project, sid = S.safe_name(project), S.safe_name(sid)
+    if recorder.active and recorder.project == project and recorder.sid == sid:
+        raise HTTPException(409, "Stop the recording first — the transcript is still being written")
+    ids = [int(i) for i in data.get("ids") or []]
+    if not ids:
+        _err(ValueError("No scenes given"))
+    python = S.load_settings().get("recorder_python") or sys.executable
+    rc, out, err = await run_cmd(python, str(ROOT / "select_frames.py"), project, sid,
+                                 "--ids", ",".join(map(str, ids)), "--ocr", timeout=600)
+    if rc != 0:
+        raise HTTPException(500, (err or out).strip().splitlines()[-1] if (err or out).strip() else f"exit {rc}")
+    hub.emit({"type": "session_changed", "project": project, "sid": sid})
+    return SF.frames_payload(project, sid)
 
 
 # Capture area
