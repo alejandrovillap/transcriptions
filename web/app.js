@@ -54,6 +54,7 @@ const ICON = {
   play: '<svg viewBox="0 0 20 20" class="ico"><path d="M7 5l8 5-8 5z"/></svg>',
   open: '<svg viewBox="0 0 16 16" class="ico" style="width:14px;height:14px"><path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5"/></svg>',
   eye: '<svg viewBox="0 0 20 20" class="ico"><path d="M1.8 10S4.8 4.5 10 4.5 18.2 10 18.2 10 15.2 15.5 10 15.5 1.8 10 1.8 10z"/><circle cx="10" cy="10" r="2.6"/></svg>',
+  similar: '<svg viewBox="0 0 20 20" class="ico"><path d="M5.6 6.5A11 11 0 0 0 2.5 10s2.5 4.5 7 4.5c1 0 1.9-.2 2.7-.5M8 5.7a7 7 0 0 1 1.5-.2c4.5 0 7 4.5 7 4.5a11.6 11.6 0 0 1-1.4 2M3.5 3.5l12 12"/><path d="M14.5 2.5h3v3M17.5 2.5l-3 3" /></svg>',
   eyeOff: '<svg viewBox="0 0 20 20" class="ico"><path d="M8.2 4.7A8 8 0 0 1 10 4.5c5.2 0 8.2 5.5 8.2 5.5a14 14 0 0 1-2.4 3.1M5.3 6.2A13.6 13.6 0 0 0 1.8 10s3 5.5 8.2 5.5a7.7 7.7 0 0 0 3.6-.9M8.2 8.3a2.6 2.6 0 0 0 3.5 3.5M3 3l14 14"/></svg>',
 };
 
@@ -73,10 +74,12 @@ async function api(method, url, body) {
 }
 const sessUrl = (p = st.project, s = st.sid) => `/api/projects/${encodeURIComponent(p)}/sessions/${encodeURIComponent(s)}`;
 
-function toast(text, level = 'info', ms = 4200) {
+function toast(text, level = 'info', ms = 4200, action = null) {
   const el = document.createElement('div');
   el.className = `toast ${level}`;
-  el.innerHTML = (level === 'ok' ? '<svg viewBox="0 0 20 20" class="ico"><path d="M5 10.5l3 3 7-7"/></svg>' : '') + `<span>${esc(text)}</span>`;
+  el.innerHTML = (level === 'ok' ? '<svg viewBox="0 0 20 20" class="ico"><path d="M5 10.5l3 3 7-7"/></svg>' : '') + `<span>${esc(text)}</span>`
+    + (action ? `<button class="toast-act">${esc(action.label)}</button>` : '');
+  if (action) el.querySelector('.toast-act').onclick = () => { el.remove(); action.fn(); };
   $('#toasts').appendChild(el);
   setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, ms);
 }
@@ -561,6 +564,72 @@ const EYE_TITLE = {
   shot: ['Hide this screenshot: Beautify leaves it out', 'Use this screenshot again'],
   frame: ['Hide this frame: Beautify leaves it out', 'Use this frame again'],
 };
+const SIM_TITLE = {
+  line: 'Hide this line and the ones like it (same or nearly the same words)',
+  shot: 'Hide this picture and every one that looks like it (screenshots and frames)',
+  frame: 'Hide this frame and every picture that looks like it (frames and screenshots)',
+};
+const simBtn = (kind, key) => `<button class="sim-btn" data-sim="${kind}" data-key="${esc(key)}" title="${esc(SIM_TITLE[kind])}">${ICON.similar}</button>`;
+const tools = (kind, key) => `<span class="row-tools">${simBtn(kind, key)}${eyeBtn(kind, key)}</span>`;
+
+// "Such and similar" for lines: same words after normalising, or (longer lines) mostly the
+// same character trigrams — repeated phrases, recognizer hallucinations, filler like "угу".
+const normText = t => (t || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+function trigrams(s) { const g = new Set(), x = ` ${s} `; for (let i = 0; i < x.length - 2; i++) g.add(x.slice(i, i + 3)); return g; }
+function textSimilar(a, b, ga) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const wa = a.split(' '), wb = b.split(' ');
+  if (wa.length <= 3 || wb.length <= 3) {
+    const A = new Set(wa), B = new Set(wb);
+    return A.size === B.size && [...A].every(w => B.has(w));
+  }
+  if (Math.min(a.length, b.length) / Math.max(a.length, b.length) < 0.6) return false;
+  const gb = trigrams(b); let inter = 0;
+  ga.forEach(g => { if (gb.has(g)) inter++; });
+  return inter / (ga.size + gb.size - inter) >= 0.6;
+}
+
+async function hideSimilar(kind, key) {
+  if (!st.project || !st.sid) return;
+  try {
+    let undo, n;
+    if (kind === 'line') {
+      const target = (st.session.entries || []).find(e => e.key === key);
+      if (!target) return;
+      const a = normText(target.text), ga = trigrams(a);
+      const keys = [...new Set(st.session.entries.filter(e => (e.kind === 'speech' || e.kind === 'selection') && e.key
+        && e.kind === target.kind && textSimilar(a, normText(e.text), ga)).map(e => e.key))];
+      const fresh = keys.filter(k => !st.vis.lines.has(k));
+      fresh.forEach(k => st.vis.lines.add(k)); refreshVisDom();
+      applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'line', keys, hidden: true }));
+      n = fresh.length;
+      undo = async () => { applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'line', keys: fresh, hidden: false })); refreshVisDom(); };
+      toast(n > 1 ? `Hid ${n} similar lines` : n ? 'Hid this line (no similar ones)' : 'Already hidden', 'ok', 10000, n ? { label: 'Undo', fn: undo } : null);
+    } else {
+      toast('Looking for similar pictures…', 'info', 2500);
+      const r = await api('POST', sessUrl() + '/hide-similar', { kind, key });
+      applyVis(r.visibility);
+      const fr = r.hidden.frame || [], sh = r.hidden.shot || [];
+      n = fr.length + sh.length;
+      undo = async () => {
+        if (fr.length) applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'frame', keys: fr, hidden: false }));
+        if (sh.length) applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'shot', keys: sh, hidden: false }));
+        refreshVisDom();
+      };
+      const parts = [fr.length ? `${fr.length} frame${fr.length > 1 ? 's' : ''}` : '', sh.length ? `${sh.length} screenshot${sh.length > 1 ? 's' : ''}` : ''].filter(Boolean);
+      toast(n ? `Hid ${parts.join(' and ')} that look alike` : 'Already hidden', 'ok', 10000, n ? { label: 'Undo', fn: undo } : null);
+    }
+    refreshVisDom();
+  } catch (e) { fail(e); }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.sim-btn');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  hideSimilar(b.dataset.sim, b.dataset.key);
+}, true);
+
 function eyeBtn(kind, key) {
   const h = isHidden(kind, key);
   return `<button class="eye-btn" data-eye="${kind}" data-key="${esc(key)}" title="${esc(EYE_TITLE[kind][h ? 1 : 0])}">${h ? ICON.eyeOff : ICON.eye}</button>`;
@@ -606,22 +675,22 @@ function entryHtml(e, prev, isNew) {
     const shot = (st.session.screenshots || []).find(s => s.path === e.path);
     const url = shot && shot.url ? shot.url : null;
     return `<div class="row shot-row${nw}${hidCls('shot', name)}" data-time="${esc(e.time)}" ${visAttr('shot', name)}><span class="t">${esc(e.time)}</span><div class="body">
-      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot</b>${esc(name)}</span></div></div>${eyeBtn('shot', name)}</div>`;
+      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot</b>${esc(name)}</span></div></div>${tools('shot', name)}</div>`;
   }
   const k = e.key || '';
   if (e.kind === 'selection') {
-    return `<div class="row${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div>${k ? eyeBtn('line', k) : ''}</div>`;
+    return `<div class="row${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div>${k ? tools('line', k) : ''}</div>`;
   }
   const cont = e.speaker != null && prev && prev.kind === 'speech' && prev.speaker === e.speaker;
   const spk = e.speaker != null ? `<div class="spk" style="--sc:${speakerColor(e.speaker)}">Speaker ${e.speaker}</div>` : '';
-  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div>${k ? eyeBtn('line', k) : ''}</div>`;
+  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div>${k ? tools('line', k) : ''}</div>`;
 }
 
 // An auto frame shown in the transcript at the moment it appeared on screen.
 function frameRowHtml(g, isNew) {
   const s = g.scene, url = s.last_url || s.url, t = hms(s.wall_start);
   return `<div class="row shot-row frame-row${isNew ? ' new' : ''}${hidCls('frame', s.id)}" data-time="${esc(t)}" data-fid="${s.id}" ${visAttr('frame', s.id)}><span class="t">${esc(t)}</span><div class="body">
-    <div class="shot-inline frame-inline" data-fid="${s.id}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Auto frame #${s.id}</b>on screen ${fmtSceneDur(g.duration)}${g.shows > 1 ? ` · shown ${g.shows}×` : ''}${s.cls ? ` · ${esc(s.cls)}` : ''}</span></div></div>${eyeBtn('frame', s.id)}</div>`;
+    <div class="shot-inline frame-inline" data-fid="${s.id}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Auto frame #${s.id}</b>on screen ${fmtSceneDur(g.duration)}${g.shows > 1 ? ` · shown ${g.shows}×` : ''}${s.cls ? ` · ${esc(s.cls)}` : ''}</span></div></div>${tools('frame', s.id)}</div>`;
 }
 
 function renderTranscript() {
@@ -729,7 +798,7 @@ function shotStages(s) {
 function shotCardHtml(s, enter) {
   const url = s.url ? `${s.url}` : '';
   return `<div class="shot-card${enter ? ' enter' : ''}${hidCls('shot', s.name)}" data-path="${esc(s.path)}" data-time="${esc(s.time)}" ${visAttr('shot', s.name)}>
-    <div class="card-tools">${eyeBtn('shot', s.name)}<button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button></div>
+    <div class="card-tools">${simBtn('shot', s.name)}${eyeBtn('shot', s.name)}<button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button></div>
     <div class="thumb" data-path="${esc(s.path)}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}</div>
     <div class="shot-meta"><div class="top"><span class="time">${esc(s.time)}</span><span class="name">${esc(s.name)}</span></div>
     <ol class="pipeline">${shotStages(s).map(([l, c]) => `<li class="${c}" title="${esc(l)}">${esc(l)}</li>`).join('')}</ol></div></div>`;
@@ -934,7 +1003,7 @@ function frameCardHtml(g) {
   if (s.cls) tags.push(`<span class="ftag" title="Level 1 (CLIP) guess, ${Math.round((s.cls_score || 0) * 100)}%">${esc(s.cls)}</span>`);
   if (s.features && s.features.deixis) tags.push(`<span class="ftag hot" title="${esc((s.deixis || []).join(' · '))}">“${s.features.deixis} pointer${s.features.deixis > 1 ? 's' : ''}”</span>`);
   return `<div class="frame-card${s.selected ? ' picked' : ''}${hidCls('frame', s.id)}" data-id="${s.id}" ${visAttr('frame', s.id)} title="Show in the transcript">
-    <div class="card-tools">${eyeBtn('frame', s.id)}</div>
+    <div class="card-tools">${simBtn('frame', s.id)}${eyeBtn('frame', s.id)}</div>
     <div class="thumb" data-fid="${s.id}" title="Open">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
     <div class="shot-meta"><div class="top"><span class="time">${esc(hms(s.wall_start))}</span><span class="name">#${s.id} · ${fmtSceneDur(g.duration)}${s.score != null ? ` · score ${s.score.toFixed(1)}` : ''}</span></div>
     <div class="ftags">${tags.join('')}</div></div></div>`;

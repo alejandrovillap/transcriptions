@@ -138,3 +138,8 @@ class ClipFilter(FrameFilter):
         emb = info.get("_embedding")
         if emb is not None:
             self.recent.append((scene.id, emb))
+            try:   # cached for "hide this and similar" in the UI (similar.py)
+                from similar import save_embedding
+                save_embedding(scene.path, emb)
+            except Exception:
+                pass

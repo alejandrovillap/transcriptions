@@ -257,7 +257,7 @@ Besides the changed area, a candidate also counts as a new scene when more than 
 
 Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs) and shown in the transcript at the moment they appeared (marked *auto*); clicking a card in the **Frames** tab scrolls the transcript there. The transcript file itself is not changed.
 
-**Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
+**Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. Next to the eye, a second button hides **this and the ones like it** in one click (Undo in the notice): for lines, the same words after normalising, or mostly the same character trigrams for longer ones (recognizer hallucinations, repeated phrases, "угу"); for pictures, every screenshot and frame whose CLIP embedding is ≥ 0.88 to it (`similar.py`; the same talking head at different times was ≥ 0.93, different slides ≤ 0.84). Embeddings are cached in `.emb/` next to the images; Level 1 writes them while recording. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
 
 ```bash
 python select_frames.py myproject 20261016_120000 -n 10 --apply
@@ -304,6 +304,7 @@ Key constants in `main.py`:
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
 | `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
 | `video_detect.py` | Find the playing video in a captured window (crop for auto frames) |
+| `similar.py` | "Hide this and similar" for pictures (CLIP embeddings, cached) |
 | `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
 | `select_frames.py` | Score scenes against the transcript, keep the best N visible (hide the rest) |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |

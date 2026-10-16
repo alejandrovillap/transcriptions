@@ -992,11 +992,45 @@ async def visibility_set(project: str, sid: str, data: dict = Body(...)):
     """Hide / show a transcript line, a screenshot or an auto frame (left out of Beautify)."""
     project, sid = S.safe_name(project), S.safe_name(sid)
     kind = data.get("kind")
-    if kind not in ("line", "shot", "frame") or data.get("key") in (None, ""):
+    keys = data.get("keys")
+    if kind not in ("line", "shot", "frame") or (not keys and data.get("key") in (None, "")):
         _err(ValueError("Bad visibility change"))
-    vis = S.set_hidden(project, sid, kind, data["key"], bool(data.get("hidden")))
+    if keys:
+        vis, _ = S.set_hidden_many(project, sid, kind, list(keys), bool(data.get("hidden")))
+    else:
+        vis = S.set_hidden(project, sid, kind, data["key"], bool(data.get("hidden")))
     hub.emit({"type": "visibility", "project": project, "sid": sid, "visibility": vis})
     return vis
+
+
+@app.post("/api/projects/{project}/sessions/{sid}/hide-similar")
+async def hide_similar(project: str, sid: str, data: dict = Body(...)):
+    """Hide a screenshot / auto frame and every picture of this session that looks like it
+    (CLIP, similar.py). Returns what was newly hidden, so the UI can undo it."""
+    import similar
+    project, sid = S.safe_name(project), S.safe_name(sid)
+    kind, key = data.get("kind"), data.get("key")
+    frames = {g["id"]: g["path"] for g in S.frame_groups(S.load_scenes(project, sid))}
+    shots = {Path(s["path"]).name: s["path"] for s in S.load_session(project, sid)["screenshots"]}
+    if kind == "frame" and int(key) in frames:
+        target = frames[int(key)]
+    elif kind == "shot" and key in shots:
+        target = shots[key]
+    else:
+        _err(ValueError("Unknown picture"))
+    try:
+        hit = await asyncio.to_thread(similar.similar_to, target, {("frame", k): v for k, v in frames.items()}
+                                      | {("shot", k): v for k, v in shots.items()})
+    except RuntimeError as e:
+        _err(e)
+    newly = {"frame": [], "shot": []}
+    vis = S.load_visibility(project, sid)
+    for k in ("frame", "shot"):
+        keys = [key_ for kk, key_ in hit if kk == k]
+        if keys:
+            vis, newly[k] = S.set_hidden_many(project, sid, k, keys, True)
+    hub.emit({"type": "visibility", "project": project, "sid": sid, "visibility": vis})
+    return {"visibility": vis, "hidden": newly}
 
 
 # Capture area

@@ -372,6 +372,18 @@ def set_hidden(project: str, sid: str, kind: str, key, hidden: bool) -> dict:
     return save_visibility(project, sid, vis)
 
 
+def set_hidden_many(project: str, sid: str, kind: str, keys: list, hidden: bool) -> tuple[dict, list]:
+    """Hide/show several items; returns (visibility, keys whose state actually changed)."""
+    field = {"line": "lines", "shot": "shots", "frame": "frames"}[kind]
+    vis = load_visibility(project, sid)
+    items = set(vis[field])
+    keys = [int(k) if kind == "frame" else str(k) for k in keys]
+    changed = [k for k in keys if (k in items) != hidden]
+    items = items | set(keys) if hidden else items - set(keys)
+    vis[field] = list(items)
+    return save_visibility(project, sid, vis), changed
+
+
 def frame_groups(scenes: list[dict]) -> list[dict]:
     """One entry per distinct image: revisits (same_as) are folded into their original."""
     groups = {s["id"]: {**s, "shows": [[s["wall_start"], s["wall_end"]]]} for s in scenes if not s.get("same_as")}
