@@ -208,7 +208,11 @@ class FrameFilter:
     on *info* (cls, cls_score, extra) that end up in the scene."""
     def check(self, small: np.ndarray, path: str | None, image: np.ndarray | None,
               info: dict) -> str | None:
+        """May also set info["dup_of"] = scene id: the candidate is that scene again."""
         return None
+
+    def accepted(self, scene: "Scene", info: dict):
+        """Called when the candidate became a new scene."""
 
 
 class Enricher:
@@ -335,19 +339,7 @@ class FrameTriage:
                 if novelty > p.drift_frac:
                     # Same scene, but it has changed a bit (form filled in, cursor moved a lot…):
                     # keep the latest such state as the scene's "last" image.
-                    old = self.current.last_path
-                    lp = self.store.keep_image(t0, path, image, "_last")
-                    self.store.update(self.current, last_path=lp, t_end=t, wall_end=self.store.wall(t))
-                    if old and old != lp:
-                        try:
-                            os.unlink(old)
-                        except OSError:
-                            pass
-                    self.current_small = small
-                    self.on_screen = self.current
-                    self.stats["drifts"] += 1
-                    self._notify(self.current, "drift")
-                    return True
+                    return self._drift(t, t0, small, path, image)
                 self.store.update(self.current, t_end=t, wall_end=self.store.wall(t))
                 self.on_screen = self.current
                 self._notify(self.current, "extend")
@@ -360,17 +352,7 @@ class FrameTriage:
             if sc is self.current:
                 continue
             if area(changed_map(sm, small, p.pix_thresh), mask) <= p.scene_frac:
-                orig = sc.same_as or sc.id
-                s = self.store.add(path=sc.path, t_start=t0, t_end=t, wall_start=self.store.wall(t0),
-                                   wall_end=self.store.wall(t), changed=round(novelty, 4),
-                                   edges=sc.edges, mask_frac=round(mask_frac, 3), same_as=orig,
-                                   cls=sc.cls, ocr=sc.ocr, caption=sc.caption, title=sc.title)
-                self.current = self.on_screen = s
-                self.current_small = small
-                self.recent.append((s, small))
-                self.stats["revisits"] += 1
-                self._notify(s, "revisit")
-                return False
+                return self._revisit(sc, t, t0, small, novelty, mask_frac)
 
         edges = edge_density(small)
         if mask is not None and edges < p.camera_edges:
@@ -385,6 +367,17 @@ class FrameTriage:
                 self.stats["dropped"] += 1
                 self.stats["last_drop"] = reason
                 return False
+
+        dup = info.get("dup_of")
+        if dup is not None:
+            # A filter says the content is a scene we already have (pixels moved, meaning didn't).
+            self.stats["semantic_dups"] = self.stats.get("semantic_dups", 0) + 1
+            cur = self.current
+            if cur is not None and dup in (cur.id, cur.same_as):
+                return self._drift(t, t0, small, path, image)
+            orig = next((sc for sc, _ in self.recent if sc.id == dup), None)
+            if orig is not None:
+                return self._revisit(orig, t, t0, small, novelty, mask_frac)
 
         scroll_of = None
         if self.current is not None:
@@ -402,10 +395,43 @@ class FrameTriage:
         self.current_small = small
         self.recent.append((s, small))
         self.stats["scenes"] += 1
+        for flt in self.filters:
+            flt.accepted(s, info)
         self._notify(s, "new")
         if self.enrichers:
             self._enrich_q.put(s)
         return True
+
+    def _drift(self, t, t0, small, path, image) -> bool:
+        """The current scene changed a bit: keep this state as its "last" image."""
+        old = self.current.last_path
+        lp = self.store.keep_image(t0, path, image, "_last")
+        self.store.update(self.current, last_path=lp, t_end=t, wall_end=self.store.wall(t))
+        if old and old != lp:
+            try:
+                os.unlink(old)
+            except OSError:
+                pass
+        self.current_small = small
+        self.on_screen = self.current
+        self.stats["drifts"] += 1
+        self._notify(self.current, "drift")
+        return True
+
+    def _revisit(self, sc: Scene, t, t0, small, novelty, mask_frac) -> bool:
+        """Back to an earlier scene: record the interval, don't store the image again."""
+        orig = sc.same_as or sc.id
+        s = self.store.add(path=sc.path, t_start=t0, t_end=t, wall_start=self.store.wall(t0),
+                           wall_end=self.store.wall(t), changed=round(novelty, 4),
+                           edges=sc.edges, mask_frac=round(mask_frac, 3), same_as=orig,
+                           cls=sc.cls, cls_score=sc.cls_score, ocr=sc.ocr, caption=sc.caption,
+                           title=sc.title)
+        self.current = self.on_screen = s
+        self.current_small = small
+        self.recent.append((s, small))
+        self.stats["revisits"] += 1
+        self._notify(s, "revisit")
+        return False
 
     def _notify(self, scene: Scene, kind: str):
         if self.on_scene:
@@ -416,6 +442,10 @@ class FrameTriage:
 
     def _stats(self, mask_frac: float = 0.0):
         self.stats["mask"] = round(mask_frac, 3)
+        for flt in self.filters:
+            st = getattr(flt, "stats", None)
+            if st:
+                self.stats["l1"] = {**st, "ready": flt.ready.is_set()} if hasattr(flt, "ready") else st
         if self.on_stats:
             try:
                 self.on_stats(dict(self.stats))
@@ -442,16 +472,29 @@ class FrameTriage:
             self._enrich_q.put(None)
 
 
+def level1_filters(enabled: bool) -> list[FrameFilter]:
+    """Level 1 (frames_l1.py, CLIP) if enabled and importable; else nothing."""
+    if not enabled:
+        return []
+    try:
+        from frames_l1 import ClipFilter
+    except Exception as e:
+        print(f"[frames] Level 1 unavailable: {e}", file=sys.stderr)
+        return []
+    return [ClipFilter()]
+
+
 # ── Live wiring (used by main.py) ────────────────────────────────────────────
 
 class LiveFrames:
     """Receives FRAME:<path> lines from screenshot_helper and triages them on a thread."""
 
     def __init__(self, out_dir: Path, session_start: datetime, on_scene=None, on_stats=None,
-                 params: Params | None = None):
+                 params: Params | None = None, level1: bool = True):
         self.session_start = session_start
         self.store = SceneStore(out_dir, session_start)
-        self.triage = FrameTriage(self.store, params, on_scene=on_scene, on_stats=on_stats)
+        self.triage = FrameTriage(self.store, params, filters=level1_filters(level1),
+                                  on_scene=on_scene, on_stats=on_stats)
         self.q: queue.Queue = queue.Queue()
         self.thread = threading.Thread(target=self._loop, daemon=True)
         self.thread.start()
@@ -486,7 +529,8 @@ class LiveFrames:
 
 # ── Offline mode: run on a video file ────────────────────────────────────────
 
-def run_video(video: Path, out_dir: Path, fps: float, params: Params, start_time: datetime | None):
+def run_video(video: Path, out_dir: Path, fps: float, params: Params, start_time: datetime | None,
+              level1: bool = True):
     cap = cv2.VideoCapture(str(video))
     if not cap.isOpened():
         raise SystemExit(f"Cannot open {video}")
@@ -494,7 +538,11 @@ def run_video(video: Path, out_dir: Path, fps: float, params: Params, start_time
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     step = max(1, round(vfps / fps))
     store = SceneStore(out_dir, start_time or datetime.fromtimestamp(video.stat().st_mtime))
-    triage = FrameTriage(store, params)
+    filters = level1_filters(level1)
+    for f in filters:
+        if hasattr(f, "ready"):
+            f.ready.wait(300)    # offline: wait for the model instead of passing frames through
+    triage = FrameTriage(store, params, filters=filters)
     t0 = time.time()
     idx = 0
     while True:
@@ -514,7 +562,8 @@ def run_video(video: Path, out_dir: Path, fps: float, params: Params, start_time
     dur = idx / vfps
     print(f"\r\033[K{video.name}: {dur / 60:.1f} min, {triage.stats['frames']} frames → "
           f"{triage.stats['scenes']} scenes (+{triage.stats['revisits']} revisits, "
-          f"{triage.stats['drifts']} drifts) in {time.time() - t0:.0f}s", file=sys.stderr)
+          f"{triage.stats['drifts']} drifts, {triage.stats['dropped']} dropped, "
+          f"{triage.stats.get('semantic_dups', 0)} semantic dups) in {time.time() - t0:.0f}s", file=sys.stderr)
     return store
 
 
@@ -563,6 +612,8 @@ def write_contact_sheet(store: SceneStore):
             tags.append("drifted")
         if s.mask_frac:
             tags.append(f"mask {s.mask_frac:.0%}")
+        if s.cls:
+            tags.append(f"{s.cls} {s.cls_score:.0%}")
         img = Path(s.path).name
         last = f'<img src="{Path(s.last_path).name}" loading="lazy">' if s.last_path else ""
         cards.append(f'<figure><img src="{img}" loading="lazy">{last}<figcaption><b>#{s.id}</b> '
@@ -584,6 +635,7 @@ def main():
     ap.add_argument("--fps", type=float, default=1.0, help="Sampling rate (default 1 frame/s, like live)")
     ap.add_argument("--truth", type=Path, default=None, help="Folder of hand-made screenshots to measure recall")
     ap.add_argument("--start", default=None, help="Wall-clock start of the video (ISO), for scene timestamps")
+    ap.add_argument("--no-l1", action="store_true", help="Level 0 only (no CLIP filter)")
     for f in Params.__dataclass_fields__.values():
         ap.add_argument("--" + f.name.replace("_", "-"), type=type(f.default), default=f.default)
     a = ap.parse_args()
@@ -591,7 +643,7 @@ def main():
     if a.out.exists() and (a.out / "scenes.json").exists():
         shutil.rmtree(a.out)
     store = run_video(a.video, a.out, a.fps, params,
-                      datetime.fromisoformat(a.start) if a.start else None)
+                      datetime.fromisoformat(a.start) if a.start else None, level1=not a.no_l1)
     write_contact_sheet(store)
     print(f"Scenes: {store.json_path}\nContact sheet: {store.dir / 'index.html'}")
     if a.truth:

@@ -177,6 +177,8 @@ class Recorder:
             cmd.append("--save-audio")
         if opts.get("auto_frames"):
             cmd += ["--auto-frames", "1"]
+        if not settings.get("frames_l1", True):
+            cmd.append("--no-frames-l1")
         continue_sid = (opts.get("continue_sid") or "").strip()
         if continue_sid:
             if not S.transcript_path(project, continue_sid).exists():

@@ -145,8 +145,17 @@ def score_scenes(project: str, sid: str) -> list[dict]:
 
 def select(project: str, sid: str, n: int = 10) -> dict:
     rows = score_scenes(project, sid)
-    for i, r in enumerate(rows):
-        r["selected"] = i < n
+    # Level 1 marks look-alikes (extra.l1_near); pick at most one of each such pair.
+    near = {sc["id"]: sc.get("extra", {}).get("l1_near") for sc in load_scenes(project, sid)}
+    picked: set[int] = set()
+    for r in rows:
+        other = near.get(r["id"])
+        twins = {other} | {k for k, v in near.items() if v == r["id"]}
+        r["selected"] = len(picked) < n and not (twins & picked)
+        if r["selected"]:
+            picked.add(r["id"])
+        elif twins & picked:
+            r["skipped_as_near"] = sorted(twins & picked)
     result = {"sid": sid, "n": n, "created": datetime.now().isoformat(timespec="seconds"),
               "method": "heuristic-v0", "scenes": rows}
     S._write_json(frames_dir(project, sid) / "selection.json", result)

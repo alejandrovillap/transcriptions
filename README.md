@@ -263,7 +263,16 @@ To tune thresholds on a recorded talk (and measure recall against hand-made scre
 python autoframes.py talk.mp4 --out /tmp/frames [--truth projects/x/screenshots] [--scene-frac 0.03 ...]
 ```
 
-It writes `index.html` with every scene for a quick look. Planned: Level 1 (image embeddings: semantic dedup, face/slide/code classes) as a `FrameFilter`, Level 2 (OCR + VLM caption) as an `Enricher`, and a final pick by a text LLM over the transcript and scene list.
+It writes `index.html` with every scene for a quick look.
+
+**Level 1** (`frames_l1.py`, on by default) runs CLIP ViT-B/32 (~14 ms per candidate on MPS, downloaded once, ~600 MB) on each Level-0 candidate:
+
+- zero-shot class (slide, diagram, table, code, web, document, face, desktop), shown on the frame cards; a frame that is mostly a face, a webcam or a video call is dropped (`p(face) ≥ 0.6`);
+- semantic dedup: a candidate with cosine ≥ 0.92 to a recent scene is that scene again (its "last state", or a revisit); 0.85–0.92 is kept but marked `l1_near`, and **Pick** takes only one of such a pair.
+
+On a slide talk, different slides were ≤ 0.84 apart and the same slide later ≥ 0.966. Turn it off with `--no-frames-l1` (console), the *Smart filter* switch in Settings (web UI), or `--no-l1` (offline); if the model can't load, auto frames run on Level 0 alone.
+
+Planned: Level 2 (OCR + VLM caption) as an `Enricher`, and a final pick by a text LLM over the transcript and scene list.
 
 ## Configuration
 
@@ -286,6 +295,7 @@ Key constants in `main.py`:
 | `main.py` | Main app: audio capture, VAD, transcription, screenshot integration |
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
 | `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
+| `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
 | `select_frames.py` | Score scenes against the transcript, pick the top N, promote them to screenshots |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |
 | `screenshot_helper.swift` | Native macOS helper for global hotkeys and screen capture |

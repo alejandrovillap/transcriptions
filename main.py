@@ -614,7 +614,7 @@ def helper_reader(proc):
 
 
 
-def start_live_frames(frames_dir: Path, session_start: datetime):
+def start_live_frames(frames_dir: Path, session_start: datetime, level1: bool = True):
     from autoframes import LiveFrames   # imported on demand: OpenCV is only needed for auto frames
     def on_scene(scene, kind):
         if kind in ("new", "revisit", "drift"):
@@ -626,12 +626,13 @@ def start_live_frames(frames_dir: Path, session_start: datetime):
         events.emit("frame_scene", kind=kind, id=scene.id, path=scene.path, last_path=scene.last_path,
                     same_as=scene.same_as, scroll_of=scene.scroll_of, t_start=round(scene.t_start, 2),
                     t_end=round(scene.t_end, 2), wall_start=scene.wall_start, wall_end=scene.wall_end,
-                    changed=scene.changed, mask_frac=scene.mask_frac)
+                    changed=scene.changed, mask_frac=scene.mask_frac, cls=scene.cls,
+                    cls_score=scene.cls_score)
 
     def on_stats(stats):
         events.emit_throttled("frame_stats", 1.0, "frame_stats", **stats)
 
-    return LiveFrames(frames_dir, session_start, on_scene=on_scene, on_stats=on_stats)
+    return LiveFrames(frames_dir, session_start, on_scene=on_scene, on_stats=on_stats, level1=level1)
 
 
 def shift_session_times(data, delta):
@@ -733,6 +734,8 @@ def main():
                         help="Capture the screen every SEC seconds and keep the frames that show "
                              "something new (projects/<project>/frames/<session>/); 0 = off. "
                              "With --control-stdin it can also be toggled with AUTO ON/OFF")
+    parser.add_argument("--no-frames-l1", action="store_true",
+                        help="Auto frames without Level 1 (CLIP: drops faces, merges look-alike frames)")
     parser.add_argument("--vocab-correct", action="store_true",
                         help='Replace "heard" phrases from --vocab-file with the "meant" ones in the output '
                              "(useful with gigaam/parakeet, which have no hotwords)")
@@ -895,7 +898,8 @@ def main():
         global live_frames
         with frames_lock:
             if on and live_frames is None:
-                live_frames = start_live_frames(frames_dir, session_data["start_time"])
+                live_frames = start_live_frames(frames_dir, session_data["start_time"],
+                                                level1=not args.no_frames_l1)
             try:
                 screenshot_proc.stdin.write(f"AUTO {frames_interval}\n" if on else "AUTO OFF\n")
                 screenshot_proc.stdin.flush()

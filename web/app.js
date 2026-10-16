@@ -809,7 +809,7 @@ function renderFramesBar() {
   if (live) {
     const on = st.recorder.auto_frames;
     html = `<div class="fb-stats">${on ? '<span class="auto-dot live"></span>' : ''}${stats
-      ? `<b>${stats.frames}</b> frames → <b>${stats.scenes}</b> scenes${stats.revisits ? ` · ${stats.revisits} repeats` : ''} · <span class="fb-state">${esc(stats.state)}</span>`
+      ? `<b>${stats.frames}</b> frames → <b>${stats.scenes}</b> scenes${stats.revisits ? ` · ${stats.revisits} repeats` : ''}${stats.l1 && stats.l1.faces ? ` · ${stats.l1.faces} faces skipped` : ''}${stats.l1 && !stats.l1.ready ? ' · smart filter loading' : ''} · <span class="fb-state">${esc(stats.state)}</span>`
       : on ? 'Watching the screen…' : 'Auto frames are off'}</div>
       ${st.recorder.state === 'listening' ? `<button class="ghost-btn small" id="fbAuto">${on ? 'Stop' : 'Start'} auto frames</button>` : ''}`;
   } else if (n) {
@@ -834,6 +834,7 @@ function frameCardHtml(g) {
   if (g.shows > 1) tags.push(`<span class="ftag" title="Shown ${g.shows} times">×${g.shows}</span>`);
   if (s.last_path) tags.push('<span class="ftag" title="Changed while on screen; the card shows the last state">updated</span>');
   if (s.scroll_of) tags.push(`<span class="ftag" title="Looks like a scrolled #${s.scroll_of}">scroll</span>`);
+  if (s.cls) tags.push(`<span class="ftag" title="Level 1 (CLIP) guess, ${Math.round((s.cls_score || 0) * 100)}%">${esc(s.cls)}</span>`);
   if (s.features && s.features.deixis) tags.push(`<span class="ftag hot" title="${esc((s.deixis || []).join(' · '))}">“${s.features.deixis} pointer${s.features.deixis > 1 ? 's' : ''}”</span>`);
   return `<div class="frame-card${s.selected ? ' picked' : ''}${promoted ? ' promoted' : ''}" data-id="${s.id}">
     <div class="thumb" data-fid="${s.id}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
@@ -1227,6 +1228,8 @@ async function openSettings() {
       <fieldset class="fset"><legend>Recognizer</legend>
         <div class="frow"><label>Python</label><div style="display:flex;gap:8px"><input class="field" id="setPy" value="${esc(s.recorder_python)}" placeholder="Same as the server"><button class="ghost-btn small" id="checkPy" style="height:30px">Check</button></div>
           <div class="help">The interpreter that has faster-whisper, torch and easyocr installed. <span id="checkRes" class="check-res"></span></div></div>
+        <div class="frow"><label>Auto frames</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setL1" ${s.frames_l1 !== false ? 'checked' : ''}><span class="knob"></span>Smart filter (CLIP): drop webcam faces, merge look-alike frames</label>
+          <div class="help">Applies to the next recording. Off = pixel comparison only.</div></div>
       </fieldset>
     </div>
     <div class="modal-foot"><button class="ghost-btn" data-close>Cancel</button><button class="primary-btn" id="saveSettings">Save</button></div>`,
@@ -1243,6 +1246,7 @@ async function openSettings() {
         st.settings = await api('POST', '/api/settings', {
           beautify_engine: $('#setEngine').value, beautify_model: $('#setBModel').value, chat_model: $('#setCModel').value,
           auto_final_beautify: $('#setAuto').checked, recorder_python: $('#setPy').value.trim(),
+          frames_l1: $('#setL1').checked,
         });
         if (st.project) await api('POST', `/api/projects/${encodeURIComponent(st.project)}/settings`, {
           context_dir: $('#setCtx').value.trim(), style_reference: $('#setStyle').value.trim(),
