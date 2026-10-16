@@ -134,6 +134,8 @@ class Recorder:
             "screenshots": list(self.shots.values()), "diarized": False,
             "manifest": S.public_manifest(self.project, self.sid, S.load_manifest(self.project, self.sid))
             if self.sid else {"versions": []},
+            "visibility": S.load_visibility(self.project, self.sid) if self.sid
+            else {"lines": [], "shots": [], "frames": []},
         }
 
     def set_state(self, state: str, detail: str = ""):
@@ -401,6 +403,7 @@ class Recorder:
     def _add_entry(self, entry: dict):
         if entry.get("kind") == "screenshot" and entry.get("path") in self.deleted:
             entry["deleted"] = True
+        entry["key"] = S.line_key(entry)
         self.entries.append(entry)
         hub.emit({"type": "entry", "project": self.project, "sid": self.sid,
                   "idx": len(self.entries) - 1, "entry": entry})
@@ -427,10 +430,9 @@ class Recorder:
             has_speech = S.transcript_path(project, sid).exists() and any(
                 e["kind"] == "speech" for e in S.parse_transcript(S.read_transcript(project, sid)))
             if S.load_settings().get("auto_final_beautify") and has_speech:
-                try:
-                    await jobs.start(project, sid, "final")
-                except HTTPException:
-                    pass
+                # Ask in the UI instead of starting a long run on its own; "Not now" leaves
+                # the Beautify button as the way to start it later.
+                hub.emit({"type": "offer_beautify", "project": project, "sid": sid})
 
 
 recorder = Recorder()
@@ -981,25 +983,20 @@ async def frames_select(project: str, sid: str, data: dict = Body(default={})):
     project, sid = S.safe_name(project), S.safe_name(sid)
     n = max(1, min(100, int(data.get("n") or 10)))
     await asyncio.to_thread(SF.select, project, sid, n)
+    hub.emit({"type": "visibility", "project": project, "sid": sid, "visibility": S.load_visibility(project, sid)})
     return SF.frames_payload(project, sid)
 
 
-@app.post("/api/projects/{project}/sessions/{sid}/frames/promote")
-async def frames_promote(project: str, sid: str, data: dict = Body(...)):
-    """Make scenes regular screenshots: PNG + OCR + a line in the transcript."""
+@app.post("/api/projects/{project}/sessions/{sid}/visibility")
+async def visibility_set(project: str, sid: str, data: dict = Body(...)):
+    """Hide / show a transcript line, a screenshot or an auto frame (left out of Beautify)."""
     project, sid = S.safe_name(project), S.safe_name(sid)
-    if recorder.active and recorder.project == project and recorder.sid == sid:
-        raise HTTPException(409, "Stop the recording first — the transcript is still being written")
-    ids = [int(i) for i in data.get("ids") or []]
-    if not ids:
-        _err(ValueError("No scenes given"))
-    python = S.load_settings().get("recorder_python") or sys.executable
-    rc, out, err = await run_cmd(python, str(ROOT / "select_frames.py"), project, sid,
-                                 "--ids", ",".join(map(str, ids)), "--ocr", timeout=600)
-    if rc != 0:
-        raise HTTPException(500, (err or out).strip().splitlines()[-1] if (err or out).strip() else f"exit {rc}")
-    hub.emit({"type": "session_changed", "project": project, "sid": sid})
-    return SF.frames_payload(project, sid)
+    kind = data.get("kind")
+    if kind not in ("line", "shot", "frame") or data.get("key") in (None, ""):
+        _err(ValueError("Bad visibility change"))
+    vis = S.set_hidden(project, sid, kind, data["key"], bool(data.get("hidden")))
+    hub.emit({"type": "visibility", "project": project, "sid": sid, "visibility": vis})
+    return vis
 
 
 # Capture area

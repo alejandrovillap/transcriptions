@@ -548,19 +548,37 @@ kbd { display: inline-grid; place-items: center; min-width: 18px; height: 18px; 
 .fb-actions { display: flex; align-items: center; gap: 8px; }
 .fb-n { display: inline-flex; align-items: center; gap: 6px; }
 .fb-n .field.num { width: 54px; height: 28px; }
-.fb-add { height: 28px; padding: 0 11px; font-size: 12.5px; border-radius: 8px; }
 .frames { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 .frames .empty { padding: 30px 20px; }
 .frame-card { display: grid; grid-template-columns: 116px minmax(0, 1fr); gap: 12px; padding: 8px; border-radius: 12px; border: 1px solid var(--line); background: var(--panel-2); transition: border-color .2s; }
 .frame-card:hover { border-color: var(--line-strong); }
 .frame-card.picked { border-color: color-mix(in srgb, var(--accent) 55%, transparent); background: var(--accent-soft); }
-.frame-card.promoted { border-color: color-mix(in srgb, var(--ok) 45%, transparent); }
 .frame-card .thumb { position: relative; }
 .pick-star { position: absolute; top: 4px; left: 4px; font-size: 12px; line-height: 1; padding: 3px 5px; border-radius: 6px; background: var(--accent); color: var(--accent-ink); }
 .ftags { display: flex; flex-wrap: wrap; gap: 4px; margin: 5px 0 4px; }
 .ftag { font-size: 10.5px; font-weight: 600; padding: 1px 6px; border-radius: 5px; background: var(--panel); border: 1px solid var(--line); color: var(--muted); }
 .ftag.hot { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, transparent); }
-.fstate { font-size: 11.5px; color: var(--ok); font-weight: 600; }
 .lightbox .lb-img.two { gap: 14px; align-content: center; }
 .lightbox .lb-img.two img { max-height: calc(50vh - 40px); }
 @media (max-width: 900px) { .frame-card { grid-template-columns: 92px minmax(0, 1fr); } .frame-card .thumb { width: 92px; } }
+
+/* ── Hide / show (eye) ───────────────────────────────────────────────────── */
+/* Hidden lines, screenshots and frames stay in place, faded; Beautify leaves them out. */
+.row { position: relative; }
+.eye-btn { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; color: var(--muted); background: var(--raised); border: 1px solid var(--line); opacity: 0; transition: opacity .15s, color .15s, border-color .15s; flex: none; }
+.eye-btn .ico { width: 15px; height: 15px; }
+.eye-btn:hover { color: var(--ink); border-color: var(--line-strong); }
+.row > .eye-btn { position: absolute; top: 2px; right: 6px; }
+.row:hover > .eye-btn, .eye-btn:focus-visible, .is-hidden .eye-btn, .shot-card:hover .eye-btn, .frame-card:hover .eye-btn { opacity: 1; }
+.is-hidden .eye-btn { color: var(--faint); }
+.row.is-hidden p, .row.is-hidden .spk, .row.is-hidden .sel-quote { opacity: .22; }
+.row.is-hidden .t { opacity: .5; }
+.row.is-hidden .shot-inline, .shot-card.is-hidden .thumb, .frame-card.is-hidden .thumb { filter: grayscale(1); opacity: .4; }
+.shot-card.is-hidden .shot-meta, .frame-card.is-hidden .shot-meta { opacity: .5; }
+.card-tools { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; z-index: 1; }
+.card-tools .shot-del { position: static; }
+.frame-card { position: relative; cursor: pointer; }
+.shot-card .shot-meta { cursor: pointer; }
+.frame-inline { border-style: dotted; }
+.frame-inline .lbl b::after { content: "auto"; margin-left: 6px; font-size: 10px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--accent); }
+.row > .body { padding-right: 30px; }

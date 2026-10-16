@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pick the few auto frames that belong in the text, and promote them to real screenshots.
+"""Pick the auto frames that belong in the text: keep the best N visible, hide the rest.
 
 Which frame matters is decided by the transcript, not the picture: what was being said while
 the scene was on screen. Per scene (revisits of the same image are pooled) we compute
@@ -10,10 +10,11 @@ the scene was on screen. Per scene (revisits of the same image are pooled) we co
 and keep the top N. Planned next: OCR-word overlap with the speech (Level 2) and a final
 pick by a text LLM given the transcript + scene list.
 
-A promoted frame becomes screenshots/screenshot_<time>.png plus a "[screenshot: …]" line in
-the transcript at its own time, so OCR / Beautify / chat treat it like a hand-made one.
+Every visible frame goes to Beautify as a screenshot at its own time (sessions.beautify_text);
+picking hides the frames that didn't make it (sessions/<sid>/visibility.json), and any of them
+can be shown again with the eye button in the UI.
 
-  python select_frames.py <project> <sid> [-n 10] [--promote] [--ocr]
+  python select_frames.py <project> <sid> [-n 10] [--apply]
 """
 
 from __future__ import annotations
@@ -43,27 +44,14 @@ DEIXIS = [
 DEIXIS_RE = re.compile(r"(?<!\w)(?:" + "|".join(DEIXIS) + r")(?!\w)", re.IGNORECASE)
 
 
-def frames_dir(project: str, sid: str) -> Path:
-    return S.project_dir(project) / "frames" / sid
-
-
-def load_scenes(project: str, sid: str) -> list[dict]:
-    p = frames_dir(project, sid) / "scenes.json"
-    if not p.exists():
-        return []
-    return json.loads(p.read_text(encoding="utf-8"))["scenes"]
-
-
-def save_scenes(project: str, sid: str, scenes: list[dict]):
-    p = frames_dir(project, sid) / "scenes.json"
-    data = json.loads(p.read_text(encoding="utf-8"))
-    data["scenes"] = scenes
-    S._write_json(p, data)
+frames_dir = S.frames_dir
+load_scenes = S.load_scenes
 
 
 def timed_entries(project: str, sid: str) -> list[dict]:
-    """Transcript entries with absolute start/end datetimes."""
-    entries = S.parse_transcript(S.read_transcript(project, sid))
+    """Transcript entries with absolute start/end datetimes (lines hidden in the UI left out)."""
+    hidden = set(S.load_visibility(project, sid)["lines"])
+    entries = [e for e in S.parse_transcript(S.read_transcript(project, sid)) if e["key"] not in hidden]
     day = S.sid_datetime(sid) or datetime.now()
     out, prev = [], None
     for e in entries:
@@ -143,7 +131,8 @@ def score_scenes(project: str, sid: str) -> list[dict]:
     return rows
 
 
-def select(project: str, sid: str, n: int = 10) -> dict:
+def select(project: str, sid: str, n: int = 10, apply: bool = True) -> dict:
+    """Score, mark the top N; with apply, hide every other frame (and show the picked ones)."""
     rows = score_scenes(project, sid)
     # Level 1 marks look-alikes (extra.l1_near); pick at most one of each such pair.
     near = {sc["id"]: sc.get("extra", {}).get("l1_near") for sc in load_scenes(project, sid)}
@@ -159,64 +148,11 @@ def select(project: str, sid: str, n: int = 10) -> dict:
     result = {"sid": sid, "n": n, "created": datetime.now().isoformat(timespec="seconds"),
               "method": "heuristic-v0", "scenes": rows}
     S._write_json(frames_dir(project, sid) / "selection.json", result)
+    if apply:
+        vis = S.load_visibility(project, sid)
+        vis["frames"] = [r["id"] for r in rows if not r["selected"]]
+        S.save_visibility(project, sid, vis)
     return result
-
-
-# ── Promote ──────────────────────────────────────────────────────────────────
-
-def insert_transcript_line(path: Path, at: datetime, line_body: str):
-    """Insert "[HH:MM:SS] body" before the first line that is later than *at*."""
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines(keepends=True)
-    day = S.sid_datetime(path.stem.removeprefix("transcript_")) or at
-    prev = None
-    pos = len(lines)
-    for i, ln in enumerate(lines):
-        m = S.LINE_RE.match(ln.rstrip("\n"))
-        if not m:
-            continue
-        h, mi, s = map(int, m.group(1).split(":"))
-        dt = day.replace(hour=h, minute=mi, second=s, microsecond=0)
-        if prev and dt < prev - timedelta(hours=12):   # crossed midnight
-            day += timedelta(days=1)
-            dt += timedelta(days=1)
-        prev = dt
-        if dt > at:
-            pos = i
-            break
-    stamp = at.strftime("%H:%M:%S")
-    if lines and not lines[-1].endswith("\n") and pos == len(lines):
-        lines[-1] += "\n"
-    lines.insert(pos, f"[{stamp}] {line_body}\n")
-    path.write_text("".join(lines), encoding="utf-8")
-
-
-def promote(project: str, sid: str, scene_id: int, use_last: bool = True, ocr_reader=None) -> str:
-    """Turn a scene into a regular screenshot in the transcript. Returns the PNG path."""
-    import cv2
-    scenes = load_scenes(project, sid)
-    sc = next((s for s in scenes if s["id"] == scene_id), None)
-    if sc is None:
-        raise KeyError(f"No scene {scene_id}")
-    if sc.get("extra", {}).get("promoted"):
-        return sc["extra"]["promoted"]
-    src = (sc.get("last_path") if use_last else None) or sc["path"]
-    at = datetime.fromisoformat(sc["wall_start"])
-    shots = (S.project_dir(project) / "screenshots").resolve()
-    shots.mkdir(parents=True, exist_ok=True)
-    dst = shots / f"screenshot_{at:%Y%m%d_%H%M%S_%f}"[:-3]
-    dst = dst.with_name(dst.name + ".png")
-    img = cv2.imread(src)
-    if img is None:
-        raise FileNotFoundError(src)
-    cv2.imwrite(str(dst), img)
-    if ocr_reader is not None:
-        dst.with_suffix(".txt").write_text("\n".join(ocr_reader.readtext(str(dst), detail=0, paragraph=True)),
-                                           encoding="utf-8")
-    insert_transcript_line(S.transcript_path(project, sid), at, f"[screenshot: {dst}]")
-    sc.setdefault("extra", {})["promoted"] = str(dst)
-    save_scenes(project, sid, scenes)
-    return str(dst)
 
 
 def frames_payload(project: str, sid: str) -> dict:
@@ -225,10 +161,11 @@ def frames_payload(project: str, sid: str) -> dict:
     sel_path = frames_dir(project, sid) / "selection.json"
     selection = json.loads(sel_path.read_text(encoding="utf-8")) if sel_path.exists() else None
     scores = {r["id"]: r for r in (selection or {}).get("scenes", [])}
+    hidden = set(S.load_visibility(project, sid)["frames"])
     out = []
     for sc in scenes:
         r = scores.get(sc["id"])
-        out.append({**sc, "url": S.file_url(sc["path"]),
+        out.append({**sc, "url": S.file_url(sc["path"]), "hidden": (sc.get("same_as") or sc["id"]) in hidden,
                     "last_url": S.file_url(sc["last_path"]) if sc.get("last_path") else None,
                     "score": r["score"] if r else None, "selected": bool(r and r["selected"]),
                     "features": r["features"] if r else None, "deixis": r["deixis"] if r else []})
@@ -240,19 +177,9 @@ def main():
     ap.add_argument("project")
     ap.add_argument("sid")
     ap.add_argument("-n", type=int, default=10)
-    ap.add_argument("--promote", action="store_true", help="Insert the selected frames into the transcript")
-    ap.add_argument("--ocr", action="store_true", help="OCR promoted frames (EasyOCR)")
-    ap.add_argument("--ids", default="", help="Promote these scene ids (comma-separated) instead of selecting")
+    ap.add_argument("--apply", action="store_true", help="Hide every frame that wasn't picked")
     a = ap.parse_args()
-    reader = None
-    if a.ocr:
-        import easyocr
-        reader = easyocr.Reader(["ru", "en"], gpu=False, verbose=False)
-    if a.ids:
-        for i in a.ids.split(","):
-            print("promoted:", promote(a.project, a.sid, int(i), ocr_reader=reader))
-        return
-    res = select(a.project, a.sid, a.n)
+    res = select(a.project, a.sid, a.n, apply=a.apply)
     if not res["scenes"]:
         sys.exit(f"No scenes in {frames_dir(a.project, a.sid)}")
     for r in res["scenes"]:
@@ -260,10 +187,6 @@ def main():
         print(f"{'★' if r['selected'] else ' '} #{r['id']:<4} {r['wall_start'][11:19]}  score {r['score']:5.2f}  "
               f"deixis {f['deixis']}  {f['duration']:6.1f}s  {f['words']:4d} words  ×{f['shows']}  "
               f"{', '.join(r['deixis'][:3])}")
-    if a.promote:
-        for r in res["scenes"]:
-            if r["selected"]:
-                print("promoted:", promote(a.project, a.sid, r["id"], ocr_reader=reader))
 
 
 if __name__ == "__main__":

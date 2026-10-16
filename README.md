@@ -251,11 +251,15 @@ How frames are filtered (`autoframes.py`, Level 0, pixels only, ~20 ms per frame
 - a candidate opens a new *scene* if its changed area differs from the current scene by more than 3%, otherwise it extends the scene (or, between 0.5% and 3%, replaces the scene's "last state" image, e.g. a form being filled in);
 - going back to a recent slide is recorded as a revisit (`same_as`), a vertically shifted frame is marked `scroll_of`.
 
-Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs). They are **not** written into the transcript; they are matched to speech by time. In the **Frames** tab, **Pick** scores scenes by what was said while they were on screen (pointing phrases like "вот здесь", "as you can see", duration, words, novelty) and marks the top N; **Add to transcript** turns them into regular screenshots (PNG, OCR, `[screenshot: …]` line at their own time), so Beautify and chat treat them like hand-made ones. The same from the console:
+Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs) and shown in the transcript at the moment they appeared (marked *auto*); clicking a card in the **Frames** tab scrolls the transcript there. The transcript file itself is not changed.
+
+**Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
 
 ```bash
-python select_frames.py myproject 20261016_120000 -n 10 --promote --ocr
+python select_frames.py myproject 20261016_120000 -n 10 --apply
 ```
+
+When a recording stops, the UI asks whether to build the final version (Settings → *Offer to build the final version*); "Not now" leaves the **Beautify** button for later.
 
 To tune thresholds on a recorded talk (and measure recall against hand-made screenshots of it):
 
@@ -296,7 +300,7 @@ Key constants in `main.py`:
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
 | `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
 | `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
-| `select_frames.py` | Score scenes against the transcript, pick the top N, promote them to screenshots |
+| `select_frames.py` | Score scenes against the transcript, keep the best N visible (hide the rest) |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |
 | `screenshot_helper.swift` | Native macOS helper for global hotkeys and screen capture |
 | `speaker_id.py` | Speaker embedding (ECAPA-TDNN) and agglomerative clustering |

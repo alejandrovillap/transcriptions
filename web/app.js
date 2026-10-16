@@ -25,6 +25,7 @@ const st = {
   unreadChat: false,
   notes: { text: '', dirty: false, path: '' },
   frames: { scenes: [], selection: null, stats: null, busy: false },
+  vis: { lines: new Set(), shots: new Set(), frames: new Set() },   // hidden items (left out of Beautify)
   starting: false,
 };
 const CLIENT_ID = Math.random().toString(36).slice(2);
@@ -52,6 +53,8 @@ const ICON = {
   pause: '<svg viewBox="0 0 20 20" class="ico"><path d="M7.5 5v10M12.5 5v10"/></svg>',
   play: '<svg viewBox="0 0 20 20" class="ico"><path d="M7 5l8 5-8 5z"/></svg>',
   open: '<svg viewBox="0 0 16 16" class="ico" style="width:14px;height:14px"><path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5"/></svg>',
+  eye: '<svg viewBox="0 0 20 20" class="ico"><path d="M1.8 10S4.8 4.5 10 4.5 18.2 10 18.2 10 15.2 15.5 10 15.5 1.8 10 1.8 10z"/><circle cx="10" cy="10" r="2.6"/></svg>',
+  eyeOff: '<svg viewBox="0 0 20 20" class="ico"><path d="M8.2 4.7A8 8 0 0 1 10 4.5c5.2 0 8.2 5.5 8.2 5.5a14 14 0 0 1-2.4 3.1M5.3 6.2A13.6 13.6 0 0 0 1.8 10s3 5.5 8.2 5.5a7.7 7.7 0 0 0 3.6-.9M8.2 8.3a2.6 2.6 0 0 0 3.5 3.5M3 3l14 14"/></svg>',
 };
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -202,6 +205,8 @@ async function selectSession(sid, { quiet = false } = {}) {
   try {
     st.session = await api('GET', sessUrl());
   } catch (e) { fail(e); return; }
+  applyVis(st.session.visibility);
+  st.frames = { scenes: [], selection: null, stats: null, busy: false };
   st.follow = true;
   if (!quiet) st.chat = { messages: [], busy: false };
   $('#chatDot').classList.add('hidden');
@@ -215,6 +220,7 @@ async function reloadSession() {
   if (!st.project || !st.sid) return;
   try {
     st.session = await api('GET', sessUrl());
+    applyVis(st.session.visibility);
     $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(st.sid))}` : esc(sidLabel(st.sid));
     renderTranscript(); renderShots(); renderBeautify(); renderDoc();
     if (!recActive()) renderControl();
@@ -382,6 +388,7 @@ function renderControl() {
 
 function newSession() {
   st.sid = null; st.session = null; st.chat = { messages: [], busy: false };
+  applyVis(null);
   $('#sessionName').textContent = 'New session';
   renderAll();
   loadFrames();
@@ -542,6 +549,55 @@ async function snap() { try { await api('POST', '/api/record/snap'); } catch (e)
 $('#snapSideBtn').onclick = snap;
 
 // ── Transcript ─────────────────────────────────────────────────────────────
+// ── Visibility: hidden lines / screenshots / frames are kept but left out of Beautify ──
+const VIS_FIELD = { line: 'lines', shot: 'shots', frame: 'frames' };
+const isHidden = (kind, key) => st.vis[VIS_FIELD[kind]].has(kind === 'frame' ? +key : String(key));
+function applyVis(v) {
+  v = v || {};
+  st.vis = { lines: new Set(v.lines || []), shots: new Set(v.shots || []), frames: new Set((v.frames || []).map(Number)) };
+}
+const EYE_TITLE = {
+  line: ['Hide this line: it stays here, faded, but Beautify leaves it out', 'Show this line again'],
+  shot: ['Hide this screenshot: Beautify leaves it out', 'Use this screenshot again'],
+  frame: ['Hide this frame: Beautify leaves it out', 'Use this frame again'],
+};
+function eyeBtn(kind, key) {
+  const h = isHidden(kind, key);
+  return `<button class="eye-btn" data-eye="${kind}" data-key="${esc(key)}" title="${esc(EYE_TITLE[kind][h ? 1 : 0])}">${h ? ICON.eyeOff : ICON.eye}</button>`;
+}
+const visAttr = (kind, key) => `data-vis="${kind}:${esc(key)}"`;
+const hidCls = (kind, key) => (isHidden(kind, key) ? ' is-hidden' : '');
+
+function refreshVisDom() {
+  $$('[data-vis]').forEach(el => {
+    const i = el.dataset.vis.indexOf(':');
+    const kind = el.dataset.vis.slice(0, i), k = el.dataset.vis.slice(i + 1);
+    const h = isHidden(kind, k);
+    el.classList.toggle('is-hidden', h);
+    $$('.eye-btn', el).forEach(b => {
+      if (b.dataset.eye !== kind || b.dataset.key !== k) return;
+      b.innerHTML = h ? ICON.eyeOff : ICON.eye; b.title = EYE_TITLE[kind][h ? 1 : 0];
+    });
+  });
+  renderFramesBar();
+}
+
+async function toggleHidden(kind, key) {
+  if (!st.project || !st.sid) return;
+  const field = VIS_FIELD[kind], k = kind === 'frame' ? +key : String(key);
+  const hidden = !st.vis[field].has(k);
+  if (hidden) st.vis[field].add(k); else st.vis[field].delete(k);
+  refreshVisDom();
+  try { applyVis(await api('POST', sessUrl() + '/visibility', { kind, key: k, hidden })); refreshVisDom(); }
+  catch (e) { fail(e); if (hidden) st.vis[field].delete(k); else st.vis[field].add(k); refreshVisDom(); }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.eye-btn');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  toggleHidden(b.dataset.eye, b.dataset.key);
+}, true);
+
 function entryHtml(e, prev, isNew) {
   if (e.deleted) return '';
   const nw = isNew ? ' new' : '';
@@ -549,15 +605,23 @@ function entryHtml(e, prev, isNew) {
     const name = (e.path || '').split('/').pop();
     const shot = (st.session.screenshots || []).find(s => s.path === e.path);
     const url = shot && shot.url ? shot.url : null;
-    return `<div class="row shot-row${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body">
-      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot captured</b>${esc(name)}</span></div></div></div>`;
+    return `<div class="row shot-row${nw}${hidCls('shot', name)}" data-time="${esc(e.time)}" ${visAttr('shot', name)}><span class="t">${esc(e.time)}</span><div class="body">
+      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot</b>${esc(name)}</span></div></div>${eyeBtn('shot', name)}</div>`;
   }
+  const k = e.key || '';
   if (e.kind === 'selection') {
-    return `<div class="row${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div></div>`;
+    return `<div class="row${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div>${k ? eyeBtn('line', k) : ''}</div>`;
   }
   const cont = e.speaker != null && prev && prev.kind === 'speech' && prev.speaker === e.speaker;
   const spk = e.speaker != null ? `<div class="spk" style="--sc:${speakerColor(e.speaker)}">Speaker ${e.speaker}</div>` : '';
-  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div></div>`;
+  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div>${k ? eyeBtn('line', k) : ''}</div>`;
+}
+
+// An auto frame shown in the transcript at the moment it appeared on screen.
+function frameRowHtml(g, isNew) {
+  const s = g.scene, url = s.last_url || s.url, t = hms(s.wall_start);
+  return `<div class="row shot-row frame-row${isNew ? ' new' : ''}${hidCls('frame', s.id)}" data-time="${esc(t)}" data-fid="${s.id}" ${visAttr('frame', s.id)}><span class="t">${esc(t)}</span><div class="body">
+    <div class="shot-inline frame-inline" data-fid="${s.id}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Auto frame #${s.id}</b>on screen ${fmtSceneDur(g.duration)}${g.shows > 1 ? ` · shown ${g.shows}×` : ''}${s.cls ? ` · ${esc(s.cls)}` : ''}</span></div></div>${eyeBtn('frame', s.id)}</div>`;
 }
 
 function renderTranscript() {
@@ -570,8 +634,11 @@ function renderTranscript() {
     return;
   }
   // Display in time order: markers are written when flushed, which can be after a phrase that started earlier.
-  const sorted = entries.map((e, i) => [e, i]).sort((a, b) => (a[0].time < b[0].time ? -1 : a[0].time > b[0].time ? 1 : a[1] - b[1])).map(x => x[0]);
-  box.innerHTML = sorted.map((e, i) => entryHtml(e, sorted[i - 1], false)).join('') + '<div id="pipeline"></div><div id="ghost"></div>';
+  const items = entries.map((e, i) => ({ t: e.time, i, e }))
+    .concat(frameGroups().map((g, j) => ({ t: hms(g.scene.wall_start), i: -1, g })));
+  items.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.i - b.i));
+  box.innerHTML = items.map((x, i) => x.g ? frameRowHtml(x.g, false) : entryHtml(x.e, items[i - 1] && items[i - 1].e, false)).join('')
+    + '<div id="pipeline"></div><div id="ghost"></div>';
   renderChunks();
   renderGhost();
   if (st.follow) box.scrollTop = box.scrollHeight;
@@ -629,6 +696,8 @@ $('#transcript').addEventListener('scroll', () => {
 });
 $('#jumpLive').onclick = () => { st.follow = true; const b = $('#transcript'); b.scrollTop = b.scrollHeight; $('#jumpLive').classList.add('hidden'); };
 $('#transcript').addEventListener('click', e => {
+  const fi = e.target.closest('.frame-inline');
+  if (fi) { openFrameLightbox(+fi.dataset.fid); return; }
   const si = e.target.closest('.shot-inline');
   if (si) openLightbox(si.dataset.path);
 });
@@ -659,8 +728,8 @@ function shotStages(s) {
 }
 function shotCardHtml(s, enter) {
   const url = s.url ? `${s.url}` : '';
-  return `<div class="shot-card${enter ? ' enter' : ''}" data-path="${esc(s.path)}">
-    <button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button>
+  return `<div class="shot-card${enter ? ' enter' : ''}${hidCls('shot', s.name)}" data-path="${esc(s.path)}" data-time="${esc(s.time)}" ${visAttr('shot', s.name)}>
+    <div class="card-tools">${eyeBtn('shot', s.name)}<button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button></div>
     <div class="thumb" data-path="${esc(s.path)}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}</div>
     <div class="shot-meta"><div class="top"><span class="time">${esc(s.time)}</span><span class="name">${esc(s.name)}</span></div>
     <ol class="pipeline">${shotStages(s).map(([l, c]) => `<li class="${c}" title="${esc(l)}">${esc(l)}</li>`).join('')}</ol></div></div>`;
@@ -701,7 +770,8 @@ function upsertShot(shot, isNew) {
 $('#shots').addEventListener('click', e => {
   const del = e.target.closest('.shot-del');
   if (del) { confirmDeleteShot(del.closest('.shot-card'), del.dataset.del); return; }
-  const t = e.target.closest('.thumb'); if (t) openLightbox(t.dataset.path);
+  const t = e.target.closest('.thumb'); if (t) { openLightbox(t.dataset.path); return; }
+  const card = e.target.closest('.shot-card'); if (card && card.dataset.time) jumpToTime(card.dataset.time);
 });
 
 function confirmDeleteShot(card, path) {
@@ -776,6 +846,7 @@ async function loadFrames() {
   } catch (_) { st.frames.scenes = []; st.frames.selection = null; }
   st.frames.stats = isLive() ? st.recorder.frame_stats || null : null;
   renderFrames();
+  if (st.frames.scenes.length) renderTranscript();   // frames sit in the transcript at their time
 }
 
 function upsertFrame(scene) {
@@ -783,6 +854,31 @@ function upsertFrame(scene) {
   const i = list.findIndex(s => s.id === scene.id);
   if (i >= 0) list[i] = { ...list[i], ...scene }; else list.push(scene);
   renderFrames();
+  syncFrameRow(scene.same_as || scene.id, i < 0 && !scene.same_as);
+}
+
+// Keep the transcript's inline row for a frame in step (new / updated / shown again).
+function syncFrameRow(id, isNew) {
+  const box = $('#transcript');
+  if (!box || box.querySelector('.empty')) return;
+  const g = frameGroups().find(x => x.scene.id === id); if (!g) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = frameRowHtml(g, isNew);
+  const row = tmp.firstElementChild;
+  const old = box.querySelector(`.row[data-fid="${id}"]`);
+  if (old) { old.replaceWith(row); return; }
+  const later = $$('#transcript .row[data-time]').find(r => r.dataset.time > row.dataset.time);
+  box.insertBefore(row, later || $('#pipeline'));
+  if (st.follow) box.scrollTop = box.scrollHeight;
+}
+
+function jumpToFrame(id) {
+  switchTab('live');
+  const row = $(`#transcript .row[data-fid="${id}"]`);
+  if (!row) return;
+  st.follow = false;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1400);
 }
 
 function frameGroups() {
@@ -802,9 +898,9 @@ function renderFramesBar() {
   const bar = $('#framesBar');
   const live = isLive();
   const stats = st.frames.stats;
-  const n = frameGroups().length;
-  const sel = st.frames.scenes.filter(s => s.selected && !s.same_as);
-  const pending = sel.filter(s => !(s.extra && s.extra.promoted));
+  const groups = frameGroups();
+  const n = groups.length;
+  const used = groups.filter(g => !isHidden('frame', g.scene.id)).length;
   let html = '';
   if (live) {
     const on = st.recorder.auto_frames;
@@ -814,33 +910,30 @@ function renderFramesBar() {
       ${st.recorder.state === 'listening' ? `<button class="ghost-btn small" id="fbAuto">${on ? 'Stop' : 'Start'} auto frames</button>` : ''}`;
   } else if (n) {
     const lastN = (st.frames.selection && st.frames.selection.n) || 10;
-    html = `<div class="fb-stats"><b>${n}</b> scenes${sel.length ? ` · <b>${sel.length}</b> picked` : ''}</div>
-      <div class="fb-actions"><label class="fb-n">Top <input class="field num" id="fbN" type="number" min="1" max="100" value="${lastN}"></label>
-      <button class="ghost-btn small" id="fbPick" ${st.frames.busy ? 'disabled' : ''} title="Score scenes by what was said while they were on screen">${ICON.sparkle}Pick</button>
-      ${pending.length ? `<button class="primary-btn fb-add" id="fbAdd" ${st.frames.busy ? 'disabled' : ''} title="Insert the picked frames into the transcript as screenshots (with OCR)">Add ${pending.length} to transcript</button>` : ''}</div>`;
+    html = `<div class="fb-stats" title="Visible frames go to Beautify as screenshots, at their place in the transcript"><b>${used}</b> of ${n} frames go to Beautify</div>
+      <div class="fb-actions"><label class="fb-n">Best <input class="field num" id="fbN" type="number" min="1" max="100" value="${lastN}"></label>
+      <button class="ghost-btn small" id="fbPick" ${st.frames.busy ? 'disabled' : ''} title="Keep the N frames with the most said about them (pointing phrases, time on screen) and hide the rest. The eye brings any frame back.">${ICON.sparkle}Pick</button></div>`;
   }
   bar.innerHTML = html;
   bar.classList.toggle('hidden', !html);
   const a = $('#fbAuto'); if (a) a.onclick = toggleAutoFrames;
   const p = $('#fbPick'); if (p) p.onclick = pickFrames;
-  const add = $('#fbAdd'); if (add) add.onclick = () => promoteFrames(pending.map(s => s.id));
 }
 
 function frameCardHtml(g) {
   const s = g.scene;
   const url = s.last_url || s.url;
-  const promoted = s.extra && s.extra.promoted;
   const tags = [];
   if (g.shows > 1) tags.push(`<span class="ftag" title="Shown ${g.shows} times">×${g.shows}</span>`);
   if (s.last_path) tags.push('<span class="ftag" title="Changed while on screen; the card shows the last state">updated</span>');
   if (s.scroll_of) tags.push(`<span class="ftag" title="Looks like a scrolled #${s.scroll_of}">scroll</span>`);
   if (s.cls) tags.push(`<span class="ftag" title="Level 1 (CLIP) guess, ${Math.round((s.cls_score || 0) * 100)}%">${esc(s.cls)}</span>`);
   if (s.features && s.features.deixis) tags.push(`<span class="ftag hot" title="${esc((s.deixis || []).join(' · '))}">“${s.features.deixis} pointer${s.features.deixis > 1 ? 's' : ''}”</span>`);
-  return `<div class="frame-card${s.selected ? ' picked' : ''}${promoted ? ' promoted' : ''}" data-id="${s.id}">
-    <div class="thumb" data-fid="${s.id}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
+  return `<div class="frame-card${s.selected ? ' picked' : ''}${hidCls('frame', s.id)}" data-id="${s.id}" ${visAttr('frame', s.id)} title="Show in the transcript">
+    <div class="card-tools">${eyeBtn('frame', s.id)}</div>
+    <div class="thumb" data-fid="${s.id}" title="Open">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
     <div class="shot-meta"><div class="top"><span class="time">${esc(hms(s.wall_start))}</span><span class="name">#${s.id} · ${fmtSceneDur(g.duration)}${s.score != null ? ` · score ${s.score.toFixed(1)}` : ''}</span></div>
-    <div class="ftags">${tags.join('')}</div>
-    ${isLive() ? '' : promoted ? '<div class="fstate">✓ In transcript</div>' : `<button class="link-btn" data-promote="${s.id}">Add to transcript</button>`}</div></div>`;
+    <div class="ftags">${tags.join('')}</div></div></div>`;
 }
 
 function renderFrames() {
@@ -862,26 +955,14 @@ async function pickFrames() {
   try {
     const d = await api('POST', sessUrl() + '/frames/select', { n });
     st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+    st.vis.frames = new Set(d.scenes.filter(s => s.hidden && !s.same_as).map(s => s.id));
   } catch (e) { fail(e); }
-  st.frames.busy = false; renderFrames();
-}
-
-async function promoteFrames(ids) {
-  if (!ids.length) return;
-  st.frames.busy = true; renderFramesBar();
-  $$('#frames [data-promote]').forEach(b => { if (ids.includes(+b.dataset.promote)) { b.disabled = true; b.textContent = 'Adding…'; } });
-  try {
-    const d = await api('POST', sessUrl() + '/frames/promote', { ids });
-    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
-    toast(`${ids.length} frame${ids.length > 1 ? 's' : ''} added to the transcript`, 'ok');
-  } catch (e) { fail(e); }
-  st.frames.busy = false; renderFrames();
+  st.frames.busy = false; renderFrames(); refreshVisDom();
 }
 
 $('#frames').addEventListener('click', e => {
-  const pr = e.target.closest('[data-promote]');
-  if (pr) { promoteFrames([+pr.dataset.promote]); return; }
-  const t = e.target.closest('.thumb[data-fid]'); if (t) openFrameLightbox(+t.dataset.fid);
+  const t = e.target.closest('.thumb[data-fid]'); if (t) { openFrameLightbox(+t.dataset.fid); return; }
+  const card = e.target.closest('.frame-card'); if (card) jumpToFrame(+card.dataset.id);
 });
 
 function openFrameLightbox(id) {
@@ -960,6 +1041,25 @@ function openBeautifyMenu(anchor) {
     closeMenus(); runBeautify(b.dataset.mode);
   };
   openMenu(m, anchor, 'right');
+}
+
+// After a recording: ask before starting the (long) final Beautify run.
+function offerBeautify(project, sid) {
+  if (st.jobs[key(project, sid)] && st.jobs[key(project, sid)].status === 'running') return;
+  openModal(`<div class="modal-head"><h2>Recording finished</h2><p>Build the final beautified version of <b>${esc(sidLabel(sid))}</b> now?
+    Hidden lines, screenshots and frames are left out. You can always start it later with <b>Beautify</b>.</p></div>
+    <div class="modal-foot"><button class="ghost-btn" data-close>Not now</button><button class="primary-btn" id="offerGo">${ICON.sparkle}Build final version</button></div>`,
+  root => {
+    $('[data-close]', root).onclick = closeModal;
+    $('#offerGo', root).onclick = async () => {
+      closeModal();
+      try {
+        const job = await api('POST', sessUrl(project, sid) + '/beautify', { mode: 'final' });
+        st.jobs[key(job.project, job.sid)] = job;
+        renderBeautify(); renderDoc(); renderShots();
+      } catch (e) { fail(e); }
+    };
+  });
 }
 
 async function runBeautify(mode) {
@@ -1223,7 +1323,7 @@ async function openSettings() {
         <div class="frow"><label>Beautify engine</label><select class="field" id="setEngine"><option value="claude" ${s.beautify_engine !== 'api' ? 'selected' : ''}>Claude Code (recommended)</option><option value="api" ${s.beautify_engine === 'api' ? 'selected' : ''}>Gemini / OpenAI API (single pass, no tools)</option></select></div>
         <div class="frow"><label>Beautify model</label><select class="field" id="setBModel">${modelOpts(s.beautify_model)}</select></div>
         <div class="frow"><label>Chat model</label><select class="field" id="setCModel">${modelOpts(s.chat_model)}</select></div>
-        <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Build the final version automatically when recording stops</label></div>
+        <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Offer to build the final version when recording stops</label></div>
       </fieldset>
       <fieldset class="fset"><legend>Recognizer</legend>
         <div class="frow"><label>Python</label><div style="display:flex;gap:8px"><input class="field" id="setPy" value="${esc(s.recorder_python)}" placeholder="Same as the server"><button class="ghost-btn small" id="checkPy" style="height:30px">Check</button></div>
@@ -1372,6 +1472,10 @@ async function handle(m) {
     case 'frame':
       if (m.project === st.project && m.sid === st.sid) upsertFrame(m.scene);
       break;
+    case 'visibility':
+      if (m.project === st.project && m.sid === st.sid) { applyVis(m.visibility); refreshVisDom(); }
+      break;
+    case 'offer_beautify': offerBeautify(m.project, m.sid); break;
     case 'frame_stats':
       st.recorder.frame_stats = m;
       if (m.project === st.project && m.sid === st.sid) { st.frames.stats = m; renderFramesBar(); }
