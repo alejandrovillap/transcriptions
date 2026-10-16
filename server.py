@@ -987,6 +987,20 @@ async def capture_windows():
     return result[:60]
 
 
+def free_port(host: str, port: int, tries: int = 50) -> int:
+    """First port from *port* that can be bound. Windows reserves some ranges
+    (Hyper-V / WinNAT excluded ports, e.g. 8765), which fail with WinError 10013."""
+    import socket
+    for p in range(port, port + tries):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.bind((host, p))
+                return p
+            except OSError:
+                continue
+    raise SystemExit(f"No free port between {port} and {port + tries - 1}; use --port")
+
+
 def main():
     ap = argparse.ArgumentParser(description="voice-rec web UI")
     ap.add_argument("--host", default="127.0.0.1")
@@ -994,6 +1008,10 @@ def main():
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
     import uvicorn
+    port = free_port(args.host, args.port)
+    if port != args.port:
+        print(f"Port {args.port} is not available (reserved or in use), using {port}")
+        args.port = port
     url = f"http://{args.host}:{args.port}"
     print(f"voice-rec web UI: {url}")
     if not args.no_browser:

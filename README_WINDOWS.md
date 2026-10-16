@@ -36,7 +36,8 @@ Whisper `large-v3-turbo` (~1.6 GB), Silero VAD y EasyOCR.
 webui.bat
 ```
 
-Abre http://127.0.0.1:8765. Elige el idioma (Auto / EN / ES), el área de captura (pantalla completa,
+Abre http://127.0.0.1:8765, o el siguiente puerto libre si Windows tiene reservado el 8765
+(la consola muestra la dirección real). En PowerShell, desde la carpeta, escribe `.\webui.bat`. Elige el idioma (Auto / EN / ES), el área de captura (pantalla completa,
 un área o una ventana; la ventana se captura aunque esté tapada por otras) y pulsa *Start recording*.
 
 **Consola**:
