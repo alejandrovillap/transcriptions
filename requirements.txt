@@ -1,8 +1,11 @@
+# On Windows, run setup.bat: it installs the CPU build of torch first
+# (pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu).
 faster-whisper>=1.1.0
 sounddevice>=0.5.0
 numpy>=1.24.0
 torch>=2.0.0
 easyocr>=1.7.0
+pillow>=10.0            # screenshot_helper.py (Windows)
 # diarization (optional, needed for --speakers flag)
 speechbrain>=1.0.0
 scikit-learn>=1.0.0

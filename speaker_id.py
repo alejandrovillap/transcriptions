@@ -35,9 +35,17 @@ class SpeakerEmbedder:
             from speechbrain.inference.speaker import EncoderClassifier
         except ImportError:
             from speechbrain.pretrained import EncoderClassifier
+        kwargs = {}
+        try:
+            # Windows needs admin / Developer Mode for symlinks: copy the model files instead.
+            from speechbrain.utils.fetching import LocalStrategy
+            kwargs["local_strategy"] = LocalStrategy.COPY
+        except ImportError:
+            pass
         self.model = EncoderClassifier.from_hparams(
             source="speechbrain/spkrec-ecapa-voxceleb",
             run_opts={"device": device},
+            **kwargs,
         )
 
     def embed(self, audio: np.ndarray) -> np.ndarray:

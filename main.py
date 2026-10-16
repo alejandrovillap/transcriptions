@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real-time Russian speech-to-text using local Whisper model."""
+"""Real-time English/Spanish speech-to-text using a local Whisper model."""
 
 import argparse
 import base64
@@ -12,6 +12,9 @@ import queue
 import re
 from datetime import datetime, timedelta
 from pathlib import Path
+
+# Windows without Developer Mode: Hugging Face copies instead of symlinking; that's fine, don't warn.
+os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import numpy as np
 import sounddevice as sd
@@ -39,7 +42,10 @@ SAMPLE_RATE = 16000
 VAD_THRESHOLD = 0.5
 SILENCE_DURATION_MS = 1500
 MIN_SPEECH_DURATION_MS = 250
-SCREENSHOT_HELPER = Path(__file__).parent / "screenshot_helper"
+SCREENSHOT_HELPER = Path(__file__).parent / (
+    "screenshot_helper.py" if sys.platform == "win32" else "screenshot_helper")
+SUPPORTED_LANGS = ("en", "es")
+OCR_LANGS = ["es", "en"]
 BEAM_SIZE = 5
 
 # ── Diarization config ──────────────────────────────────────────────────────
@@ -111,18 +117,19 @@ def flush_pending_injections(output_file, session_data):
                         text=marker[len("[selection: "):-1])
 
 
-def detect_language(words, threshold=0.8):
-    """Return 'ru' or 'en' based on Cyrillic ratio, or None if uncertain."""
-    meaningful = [w for w in words if len(w) > 1 and any(c.isalpha() for c in w)]
-    if len(meaningful) < 10:
-        return None
-    cyrillic = sum(1 for w in meaningful if any("\u0400" <= c <= "\u04ff" for c in w))
-    ratio = cyrillic / len(meaningful)
-    if ratio >= threshold:
-        return "ru"
-    if ratio <= 1 - threshold:
-        return "en"
-    return None
+def pick_language(info, fallback):
+    """Choose 'en' or 'es' for a segment from Whisper's language probabilities.
+
+    Whisper may guess another language (pt, it, gl...) on short phrases; only
+    English and Spanish are allowed. Returns (lang, confident)."""
+    probs = dict(getattr(info, "all_language_probs", None) or [])
+    if not probs and info.language in SUPPORTED_LANGS:
+        probs = {info.language: info.language_probability}
+    en, es = probs.get("en", 0.0), probs.get("es", 0.0)
+    if en + es <= 0:
+        return fallback, False
+    lang = "es" if es >= en else "en"
+    return lang, max(en, es) / (en + es) >= LANG_CONFIDENT
 
 
 # ── Vocabulary hints (--vocab-file) ────────────────────────────────────────
@@ -156,20 +163,17 @@ def current_hotwords() -> str | None:
 
 
 # ── Language detection config ──────────────────────────────────────────────
-LANG_FIRST_CHECK = 30      # words before first detection
-LANG_RECHECK_INTERVAL = 200 # words between periodic re-checks
-LANG_WINDOW = 300           # sliding window size for re-checks
+# In auto mode every phrase is detected separately, so switching between English
+# and Spanish works. Short, ambiguous phrases fall back to the previous language.
+LANG_CONFIDENT = 0.75       # en/es probability ratio needed to trust a phrase's own detection
 
 
 def transcription_worker(whisper_model, output_file, session_data, enable_diarization, lang_mode):
     """Daemon thread: transcribe speech segments and stream results to console."""
-    # Language state
-    if lang_mode == "auto":
-        current_lang = None  # Whisper auto-detects per segment
-        lang_words = []
-        next_lang_check = LANG_FIRST_CHECK
-    else:
-        current_lang = lang_mode
+    # Language state: in auto mode, current_lang is the last confidently detected language
+    auto = lang_mode == "auto"
+    current_lang = "es" if auto else lang_mode
+    last_emitted = None
 
     while True:
         try:
@@ -190,14 +194,33 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
                     queued=transcribe_queue.qsize())
 
         try:
-            segments, info = whisper_model.transcribe(
-                segment_audio,
-                language=current_lang,
-                beam_size=BEAM_SIZE,
-                vad_filter=False,
-                word_timestamps=enable_diarization,
-                hotwords=current_hotwords(),
-            )
+            def run(language):
+                return whisper_model.transcribe(
+                    segment_audio,
+                    language=language,
+                    beam_size=BEAM_SIZE,
+                    vad_filter=False,
+                    word_timestamps=enable_diarization,
+                    hotwords=current_hotwords(),
+                )
+
+            if auto:
+                segments, info = run(None)
+                seg_lang, confident = pick_language(info, current_lang)
+                if not confident:
+                    seg_lang = current_lang
+                if seg_lang != info.language:
+                    # Whisper picked another language (or an ambiguous one): redo in en/es.
+                    segments, info = run(seg_lang)
+                elif confident:
+                    current_lang = seg_lang
+                if seg_lang != last_emitted:
+                    last_emitted = seg_lang
+                    sys.stdout.write(f"\r\033[K[lang] {seg_lang}\n")
+                    sys.stdout.flush()
+                    events.emit("lang", lang=seg_lang)
+            else:
+                segments, info = run(current_lang)
 
             # Wall-clock timestamp derived from sample-accurate time
             wall_time = session_data["start_time"] + timedelta(seconds=seg_t_start)
@@ -281,21 +304,6 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
                 sys.stdout.write("\r\033[K")
                 sys.stdout.flush()
                 events.emit("segment_empty")
-
-            # Language auto-detection
-            if lang_mode == "auto" and seg_texts:
-                for t in seg_texts:
-                    lang_words.extend(t.split())
-                if len(lang_words) >= next_lang_check:
-                    # Use sliding window for re-checks
-                    check_words = lang_words[-LANG_WINDOW:]
-                    new_lang = detect_language(check_words)
-                    if new_lang and new_lang != current_lang:
-                        current_lang = new_lang
-                        sys.stdout.write(f"\r\033[K[lang] detected: {current_lang}\n")
-                        sys.stdout.flush()
-                        events.emit("lang", lang=current_lang)
-                    next_lang_check = len(lang_words) + LANG_RECHECK_INTERVAL
 
         except Exception as e:
             print(f"\r\033[K[transcription error] {e}", file=sys.stderr)
@@ -497,7 +505,7 @@ def finalize_diarization(session_data, output_path, num_speakers, cluster_thresh
 
 def ocr_worker():
     """Daemon thread: OCR screenshots and save text to .txt files."""
-    reader = easyocr.Reader(["ru", "en"], gpu=False, verbose=False)
+    reader = easyocr.Reader(OCR_LANGS, gpu=False, verbose=False)
     while True:
         try:
             image_path = ocr_queue.get(timeout=0.5)
@@ -590,16 +598,37 @@ def save_audio_recording(project_dir: Path, timestamp: str):
         print(f"[audio] ffmpeg not found, WAV kept: {wav_path}")
 
 
+def setup_console():
+    """UTF-8 output (phrases contain ñ, á, →, ●) and ANSI escapes on the Windows console."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            k32 = ctypes.windll.kernel32
+            h = k32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+            mode = ctypes.c_uint32()
+            if k32.GetConsoleMode(h, ctypes.byref(mode)):
+                k32.SetConsoleMode(h, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+        except Exception:
+            pass
+
+
 def main():
     global SILENCE_DURATION_MS
+    setup_console()
 
-    parser = argparse.ArgumentParser(description="Real-time Russian speech-to-text")
+    parser = argparse.ArgumentParser(description="Real-time English/Spanish speech-to-text")
     parser.add_argument("project", help="Project name (isolated directory for outputs)")
-    parser.add_argument("minutes", type=float, help="Auto-stop after this many minutes")
+    parser.add_argument("minutes", type=float, nargs="?", default=180,
+                        help="Auto-stop after this many minutes (default: 180)")
     parser.add_argument("--save-audio", action="store_true", help="Save audio recording as MP3")
     parser.add_argument(
         "--lang", type=str, default=LANGUAGE,
-        help="Language code (e.g. ru, en) or 'auto' for auto-detection (default: auto)",
+        help="Language: en, es, or 'auto' to detect English/Spanish per phrase (default: auto)",
     )
     parser.add_argument(
         "--pause", type=float, default=SILENCE_DURATION_MS / 1000,
@@ -624,6 +653,8 @@ def main():
                         help='Notes file with \'- "heard" → "meant"\' lines; the correct terms are '
                              "passed to Whisper as hints (re-read on change)")
     args = parser.parse_args()
+    if args.lang.lower() not in ("auto", *SUPPORTED_LANGS):
+        parser.error(f"--lang must be auto, en or es (got {args.lang})")
     if args.events:
         events.open(args.events)
     global vocab_path
@@ -732,6 +763,8 @@ def main():
 
     # Start native screenshot helper
     helper_cmd = [str(SCREENSHOT_HELPER), str(screenshot_dir.resolve())]
+    if SCREENSHOT_HELPER.suffix == ".py":
+        helper_cmd.insert(0, sys.executable)
     if args.capture_config:
         helper_cmd.append(str(Path(args.capture_config).resolve()))
     screenshot_proc = subprocess.Popen(
@@ -740,7 +773,13 @@ def main():
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
+        errors="replace",
+        # Keep Ctrl+C for main.py only; it stops the helper itself.
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
     )
+    # Drain the helper's log so a full stderr pipe can never block it.
+    threading.Thread(target=lambda: [None for _ in screenshot_proc.stderr], daemon=True).start()
     helper_thread = threading.Thread(
         target=helper_reader, args=(screenshot_proc,), daemon=True
     )

@@ -17,6 +17,7 @@ import json
 import os
 import re
 import signal
+import subprocess
 import sys
 import time
 import uuid
@@ -36,7 +37,8 @@ import sessions as S
 
 ROOT = S.ROOT
 WEB_DIR = ROOT / "web"
-HELPER = ROOT / "screenshot_helper"
+IS_WINDOWS = sys.platform == "win32"
+HELPER = ROOT / ("screenshot_helper.py" if IS_WINDOWS else "screenshot_helper")
 CAPTURE_CONFIG = S.WEBUI_DIR / "capture.json"
 CAPTURE_PREVIEW = S.WEBUI_DIR / "capture_preview.png"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -68,6 +70,20 @@ class Hub:
 hub = Hub()
 
 
+def helper_cmd(*args: str) -> list[str]:
+    """The screenshot helper: a Python script on Windows, a native binary on macOS."""
+    if HELPER.suffix == ".py":
+        python = S.load_settings().get("recorder_python") or sys.executable
+        return [python, str(HELPER), *args]
+    return [str(HELPER), *args]
+
+
+# A child in its own process group / session, so Ctrl+C in the server console
+# doesn't kill the recorder before it finalizes (the server stops it itself).
+CHILD_FLAGS = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if IS_WINDOWS
+               else {"start_new_session": True})
+
+
 async def run_cmd(*cmd, timeout=120) -> tuple[int, str, str]:
     proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE,
                                                 stderr=asyncio.subprocess.PIPE)
@@ -76,7 +92,7 @@ async def run_cmd(*cmd, timeout=120) -> tuple[int, str, str]:
     except asyncio.TimeoutError:
         proc.kill()
         return -1, "", "timeout"
-    return proc.returncode, out.decode(errors="replace"), err.decode(errors="replace")
+    return proc.returncode, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
 
 
 # ── Recorder (main.py subprocess) ────────────────────────────────────────────
@@ -164,8 +180,8 @@ class Recorder:
         self.log.append("$ " + " ".join(cmd[1:]))
         self.proc = await asyncio.create_subprocess_exec(
             *cmd, cwd=str(ROOT), stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT, start_new_session=True,
-            env={**os.environ, "PYTHONUNBUFFERED": "1"}, limit=STREAM_LIMIT)
+            stderr=asyncio.subprocess.STDOUT, **CHILD_FLAGS,
+            env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}, limit=STREAM_LIMIT)
         S.save_settings({"last_project": project, **{k: opts[k] for k in
                          ("lang", "speakers", "minutes", "pause", "save_audio") if k in opts}})
         self.set_state("loading", "Starting recognizer")
@@ -177,9 +193,21 @@ class Recorder:
     async def stop(self):
         if not self.active:
             return
-        self.proc.send_signal(signal.SIGINT)      # same as Ctrl+C in the console
+        await self.send_stop()
         if self.state in ("loading", "listening"):
             self.set_state("stopping", "Stopping")
+
+    async def send_stop(self):
+        """Same as Ctrl+C in the console. Windows has no SIGINT for child processes,
+        so use the STOP command on stdin there (main.py runs with --control-stdin)."""
+        if IS_WINDOWS:
+            try:
+                self.proc.stdin.write(b"STOP\n")
+                await self.proc.stdin.drain()
+            except (ConnectionError, OSError):
+                pass
+        else:
+            self.proc.send_signal(signal.SIGINT)
 
     async def snap(self):
         if not self.active or self.state != "listening":
@@ -663,7 +691,7 @@ async def lifespan(app: FastAPI):
     yield
     if recorder.active:
         print("Stopping the running recording (finalizing, please wait)...")
-        recorder.proc.send_signal(signal.SIGINT)
+        await recorder.send_stop()
         try:
             await asyncio.wait_for(recorder.proc.wait(), 600)
         except asyncio.TimeoutError:
@@ -894,7 +922,7 @@ def _capture_info() -> dict:
 
 async def _refresh_preview():
     if HELPER.exists():
-        await run_cmd(str(HELPER), "--capture", str(CAPTURE_CONFIG), str(CAPTURE_PREVIEW), timeout=20)
+        await run_cmd(*helper_cmd("--capture", str(CAPTURE_CONFIG), str(CAPTURE_PREVIEW)), timeout=20)
 
 
 @app.get("/api/capture")
@@ -930,7 +958,7 @@ async def capture_preview():
 async def capture_select(data: dict = Body(...)):
     """Show the native overlay: kind = 'region' (drag) or 'window' (click)."""
     flag = "--select-region" if data.get("kind") == "region" else "--pick-window"
-    rc, out, err = await run_cmd(str(HELPER), flag, timeout=100)
+    rc, out, err = await run_cmd(*helper_cmd(flag), timeout=100)
     line = next((l for l in out.splitlines() if l.startswith(("REGION:", "WINDOW:"))), None)
     if not line:
         return JSONResponse({"cancelled": True, **_capture_info()})
@@ -944,7 +972,7 @@ async def capture_select(data: dict = Body(...)):
 
 @app.get("/api/capture/windows")
 async def capture_windows():
-    rc, out, err = await run_cmd(str(HELPER), "--list-windows", timeout=20)
+    rc, out, err = await run_cmd(*helper_cmd("--list-windows"), timeout=20)
     try:
         wins = json.loads(out)
     except json.JSONDecodeError:

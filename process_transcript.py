@@ -76,22 +76,23 @@ def generate(client, provider: str, model: str, prompt: str) -> str:
         return response.choices[0].message.content.strip()
 
 PROMPT = """\
-Твоя задача — преобразовать СЫРОЙ ТРАНСКРИПТ распознавания речи в чистый, читаемый текст.
+Your task is to turn a RAW speech-recognition TRANSCRIPT into clean, readable text.
 
-ВАЖНО:
-- Выведи ТОЛЬКО обработанный транскрипт. Ничего больше.
-- НЕ выводи содержимое скриншотов — они даны ТОЛЬКО как справочный материал.
-- Не пропускай ничего из содержания транскрипта!
-- Убери таймстампы и служебные метки (вроде [screenshot: ...])
-- Исправь ошибки распознавания (неправильные слова, склонения, окончания)
-- Особое внимание удели идентификаторам, названиям переменных, функций, файлов, технических терминов — они часто распознаются неправильно. Правильные написания ищи в СПРАВОЧНОМ МАТЕРИАЛЕ ниже.
-- Сохрани структуру и порядок изложения
+IMPORTANT:
+- Output ONLY the processed transcript. Nothing else.
+- Do NOT output the screenshot contents; they are given ONLY as reference material.
+- Do not skip any of the transcript's content!
+- Remove timestamps and service markers (such as [screenshot: ...]).
+- Fix recognition errors (wrong words, agreement, endings, missing accents).
+- Pay special attention to identifiers and to variable, function and file names and technical terms; they are often misrecognized. Find the correct spellings in the REFERENCE MATERIAL below.
+- Keep the structure and order of the content.
+- Keep the original language of each part (English or Spanish, possibly mixed). Do not translate.
 
-## СЫРОЙ ТРАНСКРИПТ (это нужно обработать):
+## RAW TRANSCRIPT (process this):
 
 {transcript}
 
-## СПРАВОЧНЫЙ МАТЕРИАЛ — текст со скриншотов экрана (НЕ включай в результат, используй ТОЛЬКО для исправления идентификаторов):
+## REFERENCE MATERIAL: text from the screen captures (do NOT include it in the output; use it ONLY to fix identifiers):
 
 {screenshots}
 """
@@ -201,10 +202,10 @@ Now convert this text to HTML following the same style:
 """
 
 NAME_PROMPT = """\
-Придумай короткое (2-4 слова через дефис, латиницей) название-slug для этого текста, \
-отражающее его основную тему. Только slug, без кавычек и пояснений.
+Come up with a short slug for this text (2-4 lowercase ASCII words joined by hyphens) \
+that reflects its main topic. Only the slug, no quotes or explanations.
 
-Текст:
+Text:
 {text}
 """
 
@@ -352,7 +353,7 @@ def main():
     # Build prompt
     prompt = PROMPT.format(
         transcript=transcript_text,
-        screenshots=screenshot_text if screenshot_text else "(нет скриншотов)",
+        screenshots=screenshot_text if screenshot_text else "(no screenshots)",
     )
 
     # Detect provider and model

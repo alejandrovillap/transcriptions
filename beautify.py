@@ -327,7 +327,7 @@ def main():
             rec = finish(args.project, sid, spec["v"], "failed", error=str(e))
     else:
         proc = subprocess.Popen(claude_command(spec), cwd=spec["cwd"], stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE, text=True)
+                                stdout=subprocess.PIPE, text=True, encoding="utf-8", errors="replace")
         proc.stdin.write(spec["prompt"])
         proc.stdin.close()
         result = {}

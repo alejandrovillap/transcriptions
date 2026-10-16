@@ -16,9 +16,12 @@ def claude_binary() -> str | None:
     if found:
         return found
     for p in ("~/.local/bin/claude", "/opt/homebrew/bin/claude", "/usr/local/bin/claude",
-              "~/.claude/local/claude"):
+              "~/.claude/local/claude",
+              # Windows: native installer, then npm global install
+              "~/.local/bin/claude.exe", "~/.claude/local/claude.exe",
+              os.path.join(os.environ.get("APPDATA", ""), "npm", "claude.cmd")):
         p = os.path.expanduser(p)
-        if os.access(p, os.X_OK):
+        if os.path.isfile(p) and os.access(p, os.X_OK):
             return p
     return None
 

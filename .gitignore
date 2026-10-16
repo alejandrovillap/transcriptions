@@ -25,3 +25,6 @@ __pycache__/
 # IDE
 .idea/
 .vscode/
+
+# Windows virtualenv (setup.bat)
+.venv/

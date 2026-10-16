@@ -292,7 +292,7 @@ function renderControl() {
       <button class="rec-btn" id="startBtn" ${st.project ? '' : 'disabled'}><span class="dot"></span>Start recording</button>
       <div class="opt-group">
         <div class="opt"><span class="opt-label">Language</span>
-          <div class="seg" id="langSeg">${['auto', 'en', 'ru'].map(l => `<button data-v="${l}" class="${(s.lang || 'auto') === l ? 'on' : ''}">${l === 'auto' ? 'Auto' : l.toUpperCase()}</button>`).join('')}</div></div>
+          <div class="seg" id="langSeg">${['auto', 'en', 'es'].map(l => `<button data-v="${l}" class="${(s.lang || 'auto') === l ? 'on' : ''}" title="${l === 'auto' ? 'Detect English/Spanish per phrase' : l === 'en' ? 'English only' : 'Spanish only'}">${l === 'auto' ? 'Auto' : l.toUpperCase()}</button>`).join('')}</div></div>
         <div class="opt"><span class="opt-label">Speakers</span>
           <select class="field" id="spkSel">${['auto', 'off', '2', '3', '4', '5', '6', '8'].map(v => `<option value="${v}" ${String(s.speakers || 'auto') === v ? 'selected' : ''}>${v === 'auto' ? 'Detect' : v === 'off' ? 'Off' : v}</option>`).join('')}</select></div>
         <div class="opt"><span class="opt-label">Auto-stop</span><input class="field num" id="minInp" type="number" min="1" value="${s.minutes || 180}"> min</div>
@@ -506,7 +506,7 @@ function renderTranscript() {
 function emptyTranscript() {
   if (!st.project) return `<div class="empty"><div class="art">${ICON.mic}</div><h3>Create a project to begin</h3><p>Projects keep transcripts, screenshots and documents together.</p></div>`;
   return `<div class="empty"><div class="art">${ICON.mic}</div><h3>Ready when you are</h3>
-    <p>Choose what screenshots should capture (top right), then press <b>Start recording</b>. Speech appears here as it is recognized; press <kbd>⌃</kbd><kbd>⇧</kbd><kbd>S</kbd> or <b>Snap</b> to capture the screen.</p></div>`;
+    <p>Choose what screenshots should capture (top right), then press <b>Start recording</b>. Speech appears here as it is recognized; press <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd> or <b>Snap</b> to capture the screen.</p></div>`;
 }
 
 function appendEntry(idx, entry) {
@@ -584,7 +584,7 @@ function renderShots() {
   $('#snapSideBtn').classList.toggle('hidden', !(isLive() && st.recorder.state === 'listening' && st.side === 'shots'));
   const box = $('#shots');
   if (!shots.length) {
-    box.innerHTML = `<div class="empty"><div class="art">${ICON.camera}</div><h3>No screenshots yet</h3><p>Press <kbd>⌃</kbd><kbd>⇧</kbd><kbd>S</kbd> while recording. Each screenshot is OCR'd and used by Beautify to fix names and identify speakers.</p></div>`;
+    box.innerHTML = `<div class="empty"><div class="art">${ICON.camera}</div><h3>No screenshots yet</h3><p>Press <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd> while recording. Each screenshot is OCR'd and used by Beautify to fix names and identify speakers.</p></div>`;
     return;
   }
   box.innerHTML = shots.reverse().map(s => shotCardHtml(s, false)).join('');
@@ -918,7 +918,7 @@ function renderCapturePop(waiting) {
   const [, label] = captureText(cfg);
   pop.innerHTML = `
     <div class="pop-title">Screenshot area</div>
-    <div class="pop-sub">What <kbd>⌃</kbd><kbd>⇧</kbd><kbd>S</kbd> and Snap capture. Changes apply immediately, even mid-recording, so this window can stay out of your screenshots.</div>
+    <div class="pop-sub">What <kbd>Ctrl</kbd><kbd>Shift</kbd><kbd>S</kbd> and Snap capture. Changes apply immediately, even mid-recording, so this window can stay out of your screenshots.</div>
     <div class="modes">
       <button class="mode ${cfg.mode === 'full' ? 'on' : ''}" data-m="full">${ICON.screen}Full screen<small>main display</small></button>
       <button class="mode ${cfg.mode === 'region' ? 'on' : ''}" data-m="region">${ICON.area}Area<small>drag to select</small></button>
@@ -1288,7 +1288,7 @@ $('#docFrame').addEventListener('load', () => {
     const s = await api('GET', '/api/status');
     st.settings = s.settings; st.recorder = s.recorder; st.claude = s.claude;
     if (s.recorder.pipeline) st.pipeline = s.recorder.pipeline;
-    if (!s.helper) toast('screenshot_helper binary is missing — run ./compile.sh', 'error', 8000);
+    if (!s.helper) toast('screenshot_helper is missing (screenshot_helper.py on Windows, ./compile.sh on macOS)', 'error', 8000);
     await loadProjects();
     if (st.project) await selectProject(st.project);
     else renderAll();
