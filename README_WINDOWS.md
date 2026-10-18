@@ -106,6 +106,29 @@ que muestran algo nuevo. Se activa con el interruptor **Auto frames** antes de g
 
 Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
 
+## Minutas (exclusivo de esta versión)
+
+Pestaña **Minutes**, junto a *Beautified*: genera la minuta formal de la reunión con Claude, en el
+idioma de la reunión. Incluye:
+- datos de la reunión y asistentes con su rol;
+- objetivo y temas tratados;
+- **decisiones**;
+- **acuerdos y tareas** con responsable, fecha compromiso y estado;
+- riesgos, temas abiertos y próximos pasos.
+
+Cada punto cita el minuto `[HH:MM:SS]` en que se dijo.
+
+- Usa la versión *Beautified* si existe, porque ahí los hablantes ya tienen nombre. Si no existe,
+  usa la transcripción, sin las líneas ocultas. También tiene en cuenta las notas del proyecto.
+- No inventa datos: lo que no se dijo queda como "Por definir", y distingue una decisión de una
+  simple propuesta.
+- Cada pulsación crea una versión nueva (m1, m2…) en `sessions\<sesión>\minutes\`, con copia en
+  `projects\<proyecto>\docs\`.
+- Desde consola: `.venv\Scripts\python minutes.py <proyecto> latest`.
+
+El código está en archivos propios (`minutes.py`, `minutes_api.py`, `web/minutes.js`,
+`templates/minutes_template.html`), así que las actualizaciones del autor casi no chocan con él.
+
 ## Otras funciones de esta versión
 
 - **Pausar el micrófono** (botón *Pause* / *Resume*) sin detener la grabación: el tiempo sigue

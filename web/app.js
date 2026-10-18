@@ -217,6 +217,7 @@ async function selectSession(sid, { quiet = false } = {}) {
   renderAll();
   loadChat();
   loadFrames();
+  window.Minutes?.load();
 }
 
 async function reloadSession() {
@@ -228,6 +229,7 @@ async function reloadSession() {
     renderTranscript(); renderShots(); renderBeautify(); renderDoc();
     if (!recActive()) renderControl();
     loadFrames();
+    window.Minutes?.load();
   } catch (e) { /* ignore */ }
 }
 
@@ -1534,6 +1536,8 @@ function switchTab(tab) {
   $('#tab-live').classList.toggle('hidden', tab !== 'live');
   $('#tab-beautified').classList.toggle('hidden', tab !== 'beautified');
   if (tab === 'beautified') renderDoc();
+  $('#tab-minutes').classList.toggle('hidden', tab !== 'minutes');   // Windows build: minutes.js
+  if (tab === 'minutes') window.Minutes?.render();
 }
 $$('#mainTabs .tab').forEach(b => b.onclick = () => switchTab(b.dataset.tab));
 function switchSide(side) {
@@ -1649,6 +1653,7 @@ async function handle(m) {
     case 'beautify':
       onJob(m);
       break;
+    case 'minutes': window.Minutes?.onMessage(m); break;
     case 'beautify_progress': {
       const j = st.jobs[key(m.project, m.sid)];
       if (j) { j.chars = m.chars; const el = $('#jcChars'); if (el && m.project === st.project && m.sid === st.sid) el.textContent = `${(m.chars / 1024).toFixed(0)} KB generated`; }

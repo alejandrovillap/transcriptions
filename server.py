@@ -32,6 +32,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import beautify
+import minutes_api   # Windows build: formal minutes (minutes.py)
 import claude_cli
 import select_frames as SF
 import sessions as S
@@ -758,12 +759,15 @@ async def lifespan(app: FastAPI):
             await asyncio.wait_for(recorder.proc.wait(), 600)
         except asyncio.TimeoutError:
             recorder.proc.kill()
+    minutes_api.stop_all()
     for p in list(jobs.procs.values()) + list(chat.procs.values()):
         if p.returncode is None:
             p.terminate()
 
 
 app = FastAPI(lifespan=lifespan)
+minutes_api.hub = hub
+app.include_router(minutes_api.router)
 S.PROJECTS_DIR.mkdir(exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(S.PROJECTS_DIR)), name="files")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")

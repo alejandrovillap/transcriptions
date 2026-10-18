@@ -44,6 +44,7 @@
         <div class="tabs" id="mainTabs">
           <button class="tab active" data-tab="live">Transcript <span class="tab-count" id="lineCount"></span></button>
           <button class="tab" data-tab="beautified">Beautified <span class="tab-badge" id="versionBadge"></span></button>
+          <button class="tab" data-tab="minutes">Minutes <span class="tab-badge" id="minutesBadge"></span></button>
         </div>
         <div class="beautify-ctl" id="beautifyCtl"></div>
       </div>
@@ -60,6 +61,15 @@
           <iframe id="docFrame" title="Beautified transcript"></iframe>
         </div>
         <div class="empty hidden" id="docEmpty"></div>
+      </div>
+
+      <div class="tab-body hidden" id="tab-minutes">
+        <div class="doc-toolbar" id="minToolbar"></div>
+        <div class="job-card hidden" id="minJobCard"></div>
+        <div class="doc-frame-wrap hidden" id="minFrameWrap">
+          <iframe id="minFrame" title="Meeting minutes"></iframe>
+        </div>
+        <div class="empty hidden" id="minEmpty"></div>
       </div>
     </section>
 
@@ -130,5 +140,6 @@
 <div class="toasts" id="toasts"></div>
 
 <script src="/static/app.js"></script>
+<script src="/static/minutes.js"></script>
 </body>
 </html>
