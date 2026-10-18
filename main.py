@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real-time English/Spanish speech-to-text using a local Whisper model."""
+"""Real-time English/Spanish speech-to-text using a local ASR model (Whisper or Parakeet)."""
 
 import argparse
 import base64
@@ -20,8 +20,8 @@ import numpy as np
 import sounddevice as sd
 import torch
 import easyocr
-from faster_whisper import WhisperModel
 
+from asr_engines import ENGINES, create_engine, engine_label
 from events import events
 
 try:
@@ -63,14 +63,22 @@ ocr_queue: queue.Queue[str] = queue.Queue()
 pending_injections: queue.Queue[str] = queue.Queue()
 audio_chunks: list[np.ndarray] = []
 save_audio_flag = False
+mic_muted = threading.Event()   # set via --control-stdin MUTE/UNMUTE
 
 
-def load_models():
-    """Load Whisper model and Silero VAD."""
-    print(f"Loading Whisper model '{MODEL_SIZE}' (device={DEVICE}, compute={COMPUTE_TYPE})...")
-    events.emit("status", state="loading", detail=f"Loading Whisper {MODEL_SIZE}")
-    whisper_model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type=COMPUTE_TYPE)
-    print("Whisper model loaded.")
+def load_models(engine_name="whisper", asr_model=None):
+    """Load the ASR engine and Silero VAD."""
+    if engine_name == "whisper":
+        size = asr_model or MODEL_SIZE
+        print(f"Loading Whisper model '{size}' (device={DEVICE}, compute={COMPUTE_TYPE})...")
+        events.emit("status", state="loading", detail=f"Loading Whisper {size}")
+    else:
+        label = engine_label(engine_name, asr_model)
+        print(f"Loading {label} (device=cpu)... (first run downloads the model)")
+        events.emit("status", state="loading", detail=f"Loading {label}")
+    asr_engine = create_engine(engine_name, device=DEVICE, model_size=MODEL_SIZE,
+                               compute_type=COMPUTE_TYPE, beam_size=BEAM_SIZE, asr_model=asr_model)
+    print("Whisper model loaded." if engine_name == "whisper" else f"{asr_engine.label} loaded.")
 
     print("Loading Silero VAD...")
     events.emit("status", state="loading", detail="Loading Silero VAD")
@@ -80,7 +88,7 @@ def load_models():
         trust_repo=True,
     )
     print("Silero VAD loaded.")
-    return whisper_model, vad_model
+    return asr_engine, vad_model
 
 
 def audio_callback(indata, frames, time_info, status):
@@ -88,6 +96,10 @@ def audio_callback(indata, frames, time_info, status):
     if status:
         print(f"[audio] {status}", file=sys.stderr)
     data = indata[:, 0].copy()
+    if mic_muted.is_set():
+        # Feed silence (not nothing) so timestamps stay aligned with the wall clock
+        # and a phrase in progress ends normally.
+        data = np.zeros_like(data)
     audio_queue.put(data)
     if events.enabled:
         events.emit_throttled("level", 0.08, "level", rms=float(np.sqrt(np.mean(data * data))))
@@ -162,13 +174,44 @@ def current_hotwords() -> str | None:
     return _vocab_cache["hotwords"]
 
 
+# ── Vocabulary corrections (--vocab-correct) ─────────────────────────────────
+# For engines without hotwords: replace '"heard" → "meant"' phrases in the output.
+vocab_correct = False
+_corr_cache = {"mtime": None, "rules": []}
+
+
+def current_corrections() -> list:
+    """[(compiled regex, replacement)] from the vocab file, re-read on change."""
+    if vocab_path is None:
+        return []
+    try:
+        mtime = vocab_path.stat().st_mtime
+    except OSError:
+        return []
+    if mtime != _corr_cache["mtime"]:
+        rules = []
+        for line in vocab_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = VOCAB_RE.match(line)
+            if m and m.group(1).strip() and m.group(1) != m.group(2):
+                rules.append((re.compile(r"(?<!\w)" + re.escape(m.group(1).strip()) + r"(?!\w)",
+                                         re.IGNORECASE), m.group(2)))
+        _corr_cache.update(mtime=mtime, rules=rules)
+    return _corr_cache["rules"]
+
+
+def apply_corrections(text: str) -> str:
+    for rx, meant in current_corrections():
+        text = rx.sub(meant, text)
+    return text
+
+
 # ── Language detection config ──────────────────────────────────────────────
 # In auto mode every phrase is detected separately, so switching between English
 # and Spanish works. Short, ambiguous phrases fall back to the previous language.
 LANG_CONFIDENT = 0.75       # en/es probability ratio needed to trust a phrase's own detection
 
 
-def transcription_worker(whisper_model, output_file, session_data, enable_diarization, lang_mode):
+def transcription_worker(asr_engine, output_file, session_data, enable_diarization, lang_mode):
     """Daemon thread: transcribe speech segments and stream results to console."""
     # Language state: in auto mode, current_lang is the last confidently detected language
     auto = lang_mode == "auto"
@@ -195,23 +238,23 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
 
         try:
             def run(language):
-                return whisper_model.transcribe(
+                return asr_engine.transcribe(
                     segment_audio,
                     language=language,
-                    beam_size=BEAM_SIZE,
-                    vad_filter=False,
                     word_timestamps=enable_diarization,
-                    hotwords=current_hotwords(),
+                    hotwords=current_hotwords() if asr_engine.supports_hotwords else None,
                 )
 
-            if auto:
-                segments, info = run(None)
+            correct = vocab_correct and vocab_path is not None
+            if auto and asr_engine.name == "whisper":
+                segments = run(None)
+                info = asr_engine.last_info
                 seg_lang, confident = pick_language(info, current_lang)
                 if not confident:
                     seg_lang = current_lang
                 if seg_lang != info.language:
                     # Whisper picked another language (or an ambiguous one): redo in en/es.
-                    segments, info = run(seg_lang)
+                    segments = run(seg_lang)
                 elif confident:
                     current_lang = seg_lang
                 if seg_lang != last_emitted:
@@ -220,7 +263,8 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
                     sys.stdout.flush()
                     events.emit("lang", lang=seg_lang)
             else:
-                segments, info = run(current_lang)
+                # Fixed language, or an engine that detects it by itself (Parakeet).
+                segments = run(None if auto else current_lang)
 
             # Wall-clock timestamp derived from sample-accurate time
             wall_time = session_data["start_time"] + timedelta(seconds=seg_t_start)
@@ -233,6 +277,8 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
 
             for seg in segments:
                 text = seg.text.strip()
+                if correct and text:
+                    text = apply_corrections(text)
                 if text:
                     if first:
                         sys.stdout.write(f"\r\033[K[{timestamp}] ")
@@ -252,6 +298,8 @@ def transcription_worker(whisper_model, output_file, session_data, enable_diariz
                 if enable_diarization and seg.words:
                     for w in seg.words:
                         word_text = w.word.strip()
+                        if correct and word_text:
+                            word_text = apply_corrections(word_text)
                         if word_text:
                             asr_words.append(WordToken(
                                 text=word_text,
@@ -424,8 +472,13 @@ def vad_loop(vad_model):
                     duration=round(len(speech_buffer) / SAMPLE_RATE, 1))
 
 
-def finalize_diarization(session_data, output_path, num_speakers, cluster_threshold):
-    """Post-process: cluster embeddings, label words by speaker, rewrite transcript."""
+def finalize_diarization(session_data, output_path, num_speakers, cluster_threshold,
+                         raw_text=None, prefix_text=""):
+    """Post-process: cluster embeddings, label words by speaker, rewrite transcript.
+
+    raw_text: if given, written to .raw.txt (instead of renaming the provisional file).
+    prefix_text: kept verbatim before the diarized lines (earlier part of a continued
+    session that has no speaker data)."""
     segments = session_data["segments"]
     windows = session_data["windows"]
     injections = session_data["injections"]
@@ -496,8 +549,11 @@ def finalize_diarization(session_data, output_path, num_speakers, cluster_thresh
 
     # Keep provisional as .raw.txt, write diarized to original path
     raw_path = output_path.with_suffix(".raw.txt")
-    output_path.rename(raw_path)
-    output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if raw_text is None:
+        output_path.rename(raw_path)
+    else:
+        raw_path.write_text(raw_text, encoding="utf-8")
+    output_path.write_text(prefix_text + "\n".join(lines) + "\n", encoding="utf-8")
     print(f"[diarization] Raw transcript kept: {raw_path}")
     print(f"[diarization] Diarized transcript: {output_path}")
     events.emit("diarization", state="done", speakers=n_speakers, path=str(output_path))
@@ -556,6 +612,20 @@ def helper_reader(proc):
             except Exception as e:
                 print(f"[selection error] {e}", file=sys.stderr)
 
+
+
+def shift_session_times(data, delta):
+    """Shift all relative times in session data by *delta* seconds (in place)."""
+    for seg in data["segments"]:
+        seg.t_start += delta
+        seg.t_end += delta
+        for w in seg.words:
+            w.t_start += delta
+            w.t_end += delta
+    for win in data["windows"]:
+        win.t_start += delta
+        win.t_end += delta
+    data["injections"] = [(t + delta, m) for t, m in data["injections"]]
 
 
 def save_audio_recording(project_dir: Path, timestamp: str):
@@ -646,12 +716,24 @@ def main():
     parser.add_argument("--events", default=None,
                         help="Write structured JSON-lines events to this file")
     parser.add_argument("--control-stdin", action="store_true",
-                        help="Accept commands on stdin: SNAP (screenshot), STOP")
+                        help="Accept commands on stdin: SNAP, STOP, PAUSE <sec>, MUTE, UNMUTE")
     parser.add_argument("--capture-config", default=None,
                         help="JSON capture config for the screenshot helper (area / window)")
+    parser.add_argument("--continue-session", default=None, metavar="TIMESTAMP",
+                        help="Append to an existing transcript_<TIMESTAMP>.txt instead of starting a new one")
     parser.add_argument("--vocab-file", default=None,
                         help='Notes file with \'- "heard" → "meant"\' lines; the correct terms are '
                              "passed to Whisper as hints (re-read on change)")
+    parser.add_argument("--engine", choices=ENGINES, default="whisper",
+                        help="Speech recognition engine: whisper (default, en/es detection per phrase, hotwords), "
+                             "parakeet (Parakeet TDT v3, much faster on CPU, detects the language itself); "
+                             "gigaam is Russian only")
+    parser.add_argument("--asr-model", default=None,
+                        help="Override the engine's model: a Whisper size, or an onnx-asr model name "
+                             "(e.g. gigaam-v3-e2e-ctc)")
+    parser.add_argument("--vocab-correct", action="store_true",
+                        help='Replace "heard" phrases from --vocab-file with the "meant" ones in the output '
+                             "(useful with gigaam/parakeet, which have no hotwords)")
     args = parser.parse_args()
     if args.lang.lower() not in ("auto", *SUPPORTED_LANGS):
         parser.error(f"--lang must be auto, en or es (got {args.lang})")
@@ -661,6 +743,15 @@ def main():
     if args.vocab_file:
         vocab_path = Path(args.vocab_file)
     SILENCE_DURATION_MS = int(args.pause * 1000)
+    global vocab_correct
+    vocab_correct = args.vocab_correct
+    if args.engine == "gigaam":
+        print("--engine gigaam recognizes Russian only; use whisper or parakeet for English/Spanish",
+              file=sys.stderr)
+        sys.exit(1)
+    if args.engine == "parakeet" and args.lang.lower() != "auto":
+        print(f"[lang] Parakeet detects the language by itself; --lang {args.lang} is ignored")
+        args.lang = "auto"
 
     # Parse diarization settings
     enable_diarization = args.speakers is not None
@@ -688,9 +779,23 @@ def main():
     screenshot_dir = project_dir / "screenshots"
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     save_audio_flag = args.save_audio
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_path = output_dir / f"transcript_{timestamp}.txt"
-    output_file = open(output_path, "w", encoding="utf-8")
+    prefix_text = None          # existing transcript content when continuing a session
+    if args.continue_session:
+        timestamp = args.continue_session
+        output_path = output_dir / f"transcript_{timestamp}.txt"
+        if not output_path.exists():
+            print(f"Transcript to continue not found: {output_path}", file=sys.stderr)
+            sys.exit(1)
+        prefix_text = output_path.read_text(encoding="utf-8")
+        if prefix_text and not prefix_text.endswith("\n"):
+            prefix_text += "\n"
+            output_path.write_text(prefix_text, encoding="utf-8")
+        output_file = open(output_path, "a", encoding="utf-8")
+        print(f"Continuing session {timestamp} ({len(prefix_text.splitlines())} existing lines)")
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"transcript_{timestamp}.txt"
+        output_file = open(output_path, "w", encoding="utf-8")
 
     # Shared session state
     session_data = {
@@ -702,9 +807,12 @@ def main():
     events.emit("session", project=args.project, project_dir=str(project_dir.resolve()),
                 transcript_path=str(output_path.resolve()), timestamp=timestamp,
                 start_time=session_data["start_time"].isoformat(),
-                diarization=enable_diarization)
+                diarization=enable_diarization, continued=prefix_text is not None)
 
-    whisper_model, vad_model = load_models()
+    asr_engine, vad_model = load_models(args.engine, args.asr_model)
+    if args.vocab_file and not asr_engine.supports_hotwords and not args.vocab_correct:
+        print(f"[vocab] {args.engine} has no hotwords; vocab hints are ignored (add --vocab-correct "
+              "to apply the notes' corrections to the output)")
 
     embedder = None
     if enable_diarization:
@@ -718,6 +826,8 @@ def main():
             print(f"Diarization: auto (threshold={args.cluster_threshold})")
 
     print(f"Project: {args.project} ({project_dir.resolve()})")
+    if args.engine != "whisper":
+        print(f"Engine: {asr_engine.label}")
     print(f"Language: {args.lang}")
     print(f"Silence threshold: {SILENCE_DURATION_MS}ms")
 
@@ -733,7 +843,7 @@ def main():
     lang_mode = args.lang.lower()
     worker = threading.Thread(
         target=transcription_worker,
-        args=(whisper_model, output_file, session_data, enable_diarization, lang_mode),
+        args=(asr_engine, output_file, session_data, enable_diarization, lang_mode),
         daemon=True,
     )
     worker.start()
@@ -803,6 +913,13 @@ def main():
                         events.emit("pause", seconds=SILENCE_DURATION_MS / 1000)
                     except ValueError:
                         pass
+                elif cmd in ("MUTE", "UNMUTE"):
+                    if cmd == "MUTE":
+                        mic_muted.set()
+                    else:
+                        mic_muted.clear()
+                    print(f"\r\033[K[mic] {'muted' if cmd == 'MUTE' else 'live'}")
+                    events.emit("muted", muted=cmd == "MUTE")
                 elif cmd == "STOP":
                     events.emit("status", state="stopping")
                     stop_event.set()
@@ -819,7 +936,7 @@ def main():
 
     print(f"Listening on default microphone (auto-stop in {args.minutes} min, Ctrl+C to stop early)...")
     print(f"Ctrl+Shift+S: screenshot, Ctrl+Shift+W: selection")
-    events.emit("status", state="listening")
+    events.emit("status", state="listening", engine=args.engine)
 
     try:
         vad_loop(vad_model)
@@ -841,24 +958,56 @@ def main():
 
         # Save audio recording
         if save_audio_flag:
-            save_audio_recording(project_dir, timestamp)
+            part = timestamp if prefix_text is None else \
+                f"{timestamp}_part_{session_data['start_time']:%H%M%S}"
+            save_audio_recording(project_dir, part)
 
         # Save session data for re-diarization
         if enable_diarization:
             import pickle
             session_path = project_dir / f"session_{timestamp}.pkl"
+            raw_text = None
+            prefix_for_output = ""
+            diar_data = session_data
+            if prefix_text is not None:
+                # Continued session: the new raw lines are what was appended in this run.
+                new_raw = output_path.read_text(encoding="utf-8")[len(prefix_text):]
+                old_raw_path = output_path.with_suffix(".raw.txt")
+                old_raw = old_raw_path.read_text(encoding="utf-8") if old_raw_path.exists() else prefix_text
+                raw_text = old_raw + new_raw
+                prev = None
+                if session_path.exists():
+                    try:
+                        with open(session_path, "rb") as f:
+                            prev = pickle.load(f)
+                    except Exception as e:
+                        print(f"[diarization] Could not load previous session data: {e}", file=sys.stderr)
+                if prev:
+                    # Re-cluster both parts together so speaker numbers stay consistent.
+                    shift_session_times(session_data,
+                                        (session_data["start_time"] - prev["start_time"]).total_seconds())
+                    diar_data = {
+                        "start_time": prev["start_time"],
+                        "segments": prev["segments"] + session_data["segments"],
+                        "windows": prev["windows"] + session_data["windows"],
+                        "injections": prev["injections"] + session_data["injections"],
+                    }
+                else:
+                    # Earlier part has no speaker data: keep it as is, diarize only the new part.
+                    prefix_for_output = prefix_text
             with open(session_path, "wb") as f:
                 pickle.dump({
-                    "start_time": session_data["start_time"],
-                    "segments": session_data["segments"],
-                    "windows": session_data["windows"],
-                    "injections": session_data["injections"],
+                    "start_time": diar_data["start_time"],
+                    "segments": diar_data["segments"],
+                    "windows": diar_data["windows"],
+                    "injections": diar_data["injections"],
                     "transcript_path": str(output_path),
                 }, f)
             print(f"Session data saved: {session_path}")
 
             finalize_diarization(
-                session_data, output_path, num_speakers, args.cluster_threshold,
+                diar_data, output_path, num_speakers, args.cluster_threshold,
+                raw_text=raw_text, prefix_text=prefix_for_output,
             )
 
         print(f"Transcript saved to: {output_path}")

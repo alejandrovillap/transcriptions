@@ -26,5 +26,8 @@ __pycache__/
 .idea/
 .vscode/
 
+# ASR benchmark output (transcripts of client recordings)
+bench_out/
+
 # Windows virtualenv (setup.bat)
 .venv/

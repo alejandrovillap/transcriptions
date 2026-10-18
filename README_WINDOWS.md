@@ -60,6 +60,35 @@ registrados, el helper lo indica en el log.
 
 **Beautify** necesita el CLI de Claude Code (`claude`) en el PATH. **Ask** también.
 
+## Motores de reconocimiento
+
+Se eligen en la interfaz (**Engine**) o con `--engine` en consola:
+
+| Motor | Idiomas | Notas |
+|---|---|---|
+| `whisper` (por defecto) | Inglés/español, detectado en cada frase; o fijo con `--lang en/es` | Admite *hotwords*: los términos de tus notas ayudan al reconocimiento. Es el más lento en CPU |
+| `parakeet` | Detecta el idioma él mismo (25 idiomas europeos, incluidos inglés y español) | Mucho más rápido en CPU y con puntuación. No admite *hotwords*: usa `--vocab-correct` para aplicar a la salida las correcciones de tus notas |
+
+```bat
+record.bat miproyecto --engine parakeet --vocab-file projects\miproyecto\notes.md --vocab-correct
+```
+
+Para comparar motores sobre una grabación propia (velocidad, memoria y, si das un texto de
+referencia corregido a mano, la tasa de error WER/CER):
+
+```bat
+.venv\Scripts\python bench_asr.py projects\miproyecto\recording_XXXX.wav --dur 300
+```
+
+(GigaAM, el tercer motor del autor, solo reconoce ruso y está desactivado en esta versión.)
+
+## Otras funciones de esta versión
+
+- **Pausar el micrófono** (botón *Pause* / *Resume*) sin detener la grabación: el tiempo sigue
+  corriendo y no se transcribe nada mientras está en pausa.
+- **Continuar una sesión anterior**: se elige la sesión y se pulsa *Start recording*; lo nuevo se
+  añade a la misma transcripción y la diarización se recalcula sobre todo.
+
 ## Ajustes útiles (en `main.py`)
 
 | Parámetro | Valor | Nota |
@@ -68,6 +97,25 @@ registrados, el helper lo indica en el log.
 | `DEVICE` / `COMPUTE_TYPE` | `cpu` / `int8` | Con GPU NVIDIA y CUDA: `cuda` / `float16` |
 | `LANG_CONFIDENT` | `0.75` | Cuánta seguridad hace falta para cambiar de idioma en una frase |
 | `OCR_LANGS` | `["es", "en"]` | Idiomas del OCR |
+
+## Traer las mejoras del autor
+
+La copia tiene el repo original como remoto `upstream` **solo de lectura**: el push está deshabilitado,
+así que desde aquí no se puede modificar el repo del autor. Tus cambios viven en la rama local `windows`.
+
+```bat
+git fetch upstream
+git log --oneline windows..upstream/master      :: ¿qué hay nuevo?
+git merge upstream/master                       :: integrarlo
+```
+
+Al integrar, revisa sobre todo:
+- Cambios en `screenshot_helper.swift`: hay que replicarlos en `screenshot_helper.py`, que es el helper de Windows.
+- Cosas específicas del ruso: idiomas, OCR, prompts.
+- Llamadas que solo existen en macOS/Linux: SIGINT, `start_new_session`, rutas.
+
+El autor también desarrolla en ramas que todavía no ha integrado en `master` (`asr-engines`,
+`auto-screenshots`); se ven con `git branch -r`.
 
 ## Notas
 
