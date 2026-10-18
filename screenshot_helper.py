@@ -9,16 +9,23 @@ Modes:
       Daemon: global hotkeys (Ctrl+Shift+S screenshot, Ctrl+Shift+W selection).
       Also accepts "SNAP" lines on stdin. The capture config is re-read on every
       screenshot, so the capture area can be changed while recording.
+      "AUTO <seconds>" starts automatic frames: every <seconds> a JPEG of the capture
+      area goes to <output-dir>/.frames/ and "FRAME:<path>" is printed (no flash).
+      "AUTO OFF" stops them. main.py decides which frames are worth keeping.
   screenshot_helper.py --select-region     Drag-select overlay -> prints REGION:{json}
   screenshot_helper.py --pick-window       Click-a-window overlay -> prints WINDOW:{json}
   screenshot_helper.py --list-windows      Prints visible windows as a JSON array
   screenshot_helper.py --capture <config.json> <out.png>   One-shot capture (preview)
+  screenshot_helper.py --capture-series <config.json> <out-dir> <count> <interval>
+      f00.png, f01.png… every <interval> s in one process (used by "Detect video")
   screenshot_helper.py --flash x y w h     Internal: brief white frame after a capture
 
 Capture config (JSON):
   {"mode": "full"}
   {"mode": "region", "rect": {"x":..,"y":..,"w":..,"h":..}}   virtual-screen pixels, top-left origin
   {"mode": "window", "windowId": 123, "owner": "Teams.exe", "title": "..."}
+  Optional "frames_crop": {"x":..,"y":..,"w":..,"h":..} in fractions of the captured image
+  (set by "Detect video"): automatic frames keep only that part. Screenshots stay whole.
 """
 
 import base64
@@ -144,6 +151,15 @@ user32.SendInput.argtypes = [wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
 
 def log(msg: str):
     print(f"[screenshot-helper] {msg}", file=sys.stderr, flush=True)
+
+
+_out_lock = threading.Lock()
+
+
+def emit(line: str):
+    """One protocol line on stdout; several threads write (screenshots, frames, selections)."""
+    with _out_lock:
+        print(line, flush=True)
 
 
 # ── Capture config ───────────────────────────────────────────────────────────
@@ -324,8 +340,81 @@ def take_screenshot(out_dir: str, config_path: str | None):
         except Exception as e:
             log(f"failed to write PNG: {e}")
             return
-        print(f"SCREENSHOT:{path}", flush=True)
+        emit(f"SCREENSHOT:{path}")
         flash(rect)
+
+
+# ── Automatic frames ("AUTO <seconds>" on stdin) ────────────────────────────
+
+def crop_fraction(img: Image.Image, crop: dict | None) -> Image.Image:
+    """Keep the frames_crop part (fractions of the image), if it is big enough."""
+    if not crop:
+        return img
+    try:
+        fx, fy, fw, fh = (float(crop.get(k, 0)) for k in ("x", "y", "w", "h"))
+    except (TypeError, ValueError):
+        return img
+    if fw <= 0.02 or fh <= 0.02:
+        return img
+    w, h = img.size
+    box = (max(0, round(fx * w)), max(0, round(fy * h)), min(w, round((fx + fw) * w)), min(h, round((fy + fh) * h)))
+    if box[2] - box[0] >= 16 and box[3] - box[1] >= 16:
+        return img.crop(box)
+    return img
+
+
+def take_frame(out_dir: str, config_path: str | None):
+    frames = Path(out_dir) / ".frames"
+    frames.mkdir(parents=True, exist_ok=True)
+    path = str(frames / (f"frame_{datetime.now():%Y%m%d_%H%M%S_%f}"[:-3] + ".jpg"))
+    cfg = load_config(config_path)
+    try:
+        result = capture_image(cfg)
+    except Exception as e:
+        log(f"frame capture failed: {e}")
+        return
+    if not result:
+        log("frame capture failed")
+        return
+    try:
+        crop_fraction(result[0], cfg.get("frames_crop")).convert("RGB").save(path, "JPEG", quality=85)
+    except Exception as e:
+        log(f"failed to write JPEG: {e}")
+        return
+    emit(f"FRAME:{path}")
+
+
+class AutoFrames:
+    """Timer thread that takes a frame every *interval* seconds. A tick is skipped
+    while the previous capture is still running, like the macOS helper."""
+
+    def __init__(self, out_dir: str, config_path: str | None):
+        self.out_dir, self.config_path = out_dir, config_path
+        self._stop: threading.Event | None = None
+        self._lock = threading.Lock()
+
+    def set(self, interval: float | None):
+        with self._lock:
+            if self._stop:
+                self._stop.set()
+                self._stop = None
+            if not interval or interval <= 0:
+                log("auto frames off")
+                return
+            stop = self._stop = threading.Event()
+            threading.Thread(target=self._run, args=(interval, stop), daemon=True).start()
+            log(f"auto frames every {interval}s")
+
+    def _run(self, interval: float, stop: threading.Event):
+        nxt = time.monotonic()
+        while not stop.is_set():
+            take_frame(self.out_dir, self.config_path)
+            nxt += interval
+            delay = nxt - time.monotonic()
+            if delay < 0:            # capture took longer than the interval: skip missed ticks
+                nxt = time.monotonic()
+                delay = 0
+            stop.wait(delay)
 
 
 def _send_keys(*events: tuple[int, bool]):
@@ -372,7 +461,7 @@ def get_selected_text():
         time.sleep(0.02)
     text = _read_clipboard_text() if user32.GetClipboardSequenceNumber() != seq else None
     if text:
-        print("SELECTION:" + base64.b64encode(text.encode("utf-8")).decode("ascii"), flush=True)
+        emit("SELECTION:" + base64.b64encode(text.encode("utf-8")).decode("ascii"))
     else:
         log("no selection found")
 
@@ -383,10 +472,23 @@ def run_daemon(out_dir: str, config_path: str | None):
         if not user32.RegisterHotKey(None, hk_id, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, vk):
             log(f"could not register Ctrl+Shift+{chr(vk)} (already used by another app?)")
 
+    auto = AutoFrames(out_dir, config_path)
+
     def stdin_reader():
         for line in sys.stdin:
-            if line.strip() == "SNAP":
+            cmd = line.strip()
+            if cmd == "SNAP":
                 threading.Thread(target=take_screenshot, args=(out_dir, config_path), daemon=True).start()
+            elif cmd.upper().startswith("AUTO"):
+                arg = cmd[4:].strip()
+                if arg.upper() == "OFF":
+                    auto.set(None)
+                else:
+                    try:
+                        auto.set(float(arg) if arg else 1.0)
+                    except ValueError:
+                        auto.set(1.0)
+        auto.set(None)   # stdin closed: main.py is gone
 
     threading.Thread(target=stdin_reader, daemon=True).start()
     log("Helper ready (Ctrl+Shift+S: screenshot, Ctrl+Shift+W: selection)")
@@ -555,6 +657,23 @@ def main() -> int:
         result[0].save(args[2], "PNG")
         print(f"OK:{args[2]}")
         return 0
+    if args[0] == "--capture-series":
+        if len(args) < 5:
+            print("Usage: --capture-series <config.json> <out-dir> <count> <interval>", file=sys.stderr)
+            return 1
+        out = Path(args[2])
+        out.mkdir(parents=True, exist_ok=True)
+        count, interval = int(args[3]), float(args[4])
+        ok = 0
+        for i in range(count):
+            t = time.monotonic()
+            result = capture_image(load_config(args[1]))
+            if result:
+                result[0].save(out / f"f{i:02d}.png", "PNG", compress_level=1)
+                ok += 1
+            time.sleep(max(0.0, interval - (time.monotonic() - t)))
+        print(f"OK:{ok}")
+        return 0 if ok else 1
     if args[0] in ("--select-region", "--pick-window"):
         return run_overlay("region" if args[0] == "--select-region" else "window")
     if args[0] == "--flash":

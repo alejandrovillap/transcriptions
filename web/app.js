@@ -24,6 +24,8 @@ const st = {
   claude: true,
   unreadChat: false,
   notes: { text: '', dirty: false, path: '' },
+  frames: { scenes: [], selection: null, stats: null, busy: false },
+  vis: { lines: new Set(), shots: new Set(), frames: new Set() },   // hidden items (left out of Beautify)
   starting: false,
 };
 const CLIENT_ID = Math.random().toString(36).slice(2);
@@ -51,6 +53,9 @@ const ICON = {
   pause: '<svg viewBox="0 0 20 20" class="ico"><path d="M7.5 5v10M12.5 5v10"/></svg>',
   play: '<svg viewBox="0 0 20 20" class="ico"><path d="M7 5l8 5-8 5z"/></svg>',
   open: '<svg viewBox="0 0 16 16" class="ico" style="width:14px;height:14px"><path d="M9 3h4v4M13 3L7.5 8.5M11 9.5V13H3V5h3.5"/></svg>',
+  eye: '<svg viewBox="0 0 20 20" class="ico"><path d="M1.8 10S4.8 4.5 10 4.5 18.2 10 18.2 10 15.2 15.5 10 15.5 1.8 10 1.8 10z"/><circle cx="10" cy="10" r="2.6"/></svg>',
+  similar: '<svg viewBox="0 0 20 20" class="ico"><path d="M5.6 6.5A11 11 0 0 0 2.5 10s2.5 4.5 7 4.5c1 0 1.9-.2 2.7-.5M8 5.7a7 7 0 0 1 1.5-.2c4.5 0 7 4.5 7 4.5a11.6 11.6 0 0 1-1.4 2M3.5 3.5l12 12"/><path d="M14.5 2.5h3v3M17.5 2.5l-3 3" /></svg>',
+  eyeOff: '<svg viewBox="0 0 20 20" class="ico"><path d="M8.2 4.7A8 8 0 0 1 10 4.5c5.2 0 8.2 5.5 8.2 5.5a14 14 0 0 1-2.4 3.1M5.3 6.2A13.6 13.6 0 0 0 1.8 10s3 5.5 8.2 5.5a7.7 7.7 0 0 0 3.6-.9M8.2 8.3a2.6 2.6 0 0 0 3.5 3.5M3 3l14 14"/></svg>',
 };
 
 // ── API ────────────────────────────────────────────────────────────────────
@@ -69,10 +74,12 @@ async function api(method, url, body) {
 }
 const sessUrl = (p = st.project, s = st.sid) => `/api/projects/${encodeURIComponent(p)}/sessions/${encodeURIComponent(s)}`;
 
-function toast(text, level = 'info', ms = 4200) {
+function toast(text, level = 'info', ms = 4200, action = null) {
   const el = document.createElement('div');
   el.className = `toast ${level}`;
-  el.innerHTML = (level === 'ok' ? '<svg viewBox="0 0 20 20" class="ico"><path d="M5 10.5l3 3 7-7"/></svg>' : '') + `<span>${esc(text)}</span>`;
+  el.innerHTML = (level === 'ok' ? '<svg viewBox="0 0 20 20" class="ico"><path d="M5 10.5l3 3 7-7"/></svg>' : '') + `<span>${esc(text)}</span>`
+    + (action ? `<button class="toast-act">${esc(action.label)}</button>` : '');
+  if (action) el.querySelector('.toast-act').onclick = () => { el.remove(); action.fn(); };
   $('#toasts').appendChild(el);
   setTimeout(() => { el.style.transition = 'opacity .3s'; el.style.opacity = '0'; setTimeout(() => el.remove(), 300); }, ms);
 }
@@ -179,7 +186,7 @@ async function loadProjects() {
 async function selectProject(name, { keepSession = false } = {}) {
   st.project = name;
   $('#projectName').textContent = name || '—';
-  if (!keepSession) { st.sid = null; st.session = null; }
+  if (!keepSession) { st.sid = null; st.session = null; resetFrames(); applyVis(null); }
   loadNotes();
   await loadSessions();
   if (!keepSession) {
@@ -201,21 +208,26 @@ async function selectSession(sid, { quiet = false } = {}) {
   try {
     st.session = await api('GET', sessUrl());
   } catch (e) { fail(e); return; }
+  applyVis(st.session.visibility);
+  resetFrames();
   st.follow = true;
   if (!quiet) st.chat = { messages: [], busy: false };
   $('#chatDot').classList.add('hidden');
   $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(sid))}` : esc(sidLabel(sid));
   renderAll();
   loadChat();
+  loadFrames();
 }
 
 async function reloadSession() {
   if (!st.project || !st.sid) return;
   try {
     st.session = await api('GET', sessUrl());
+    applyVis(st.session.visibility);
     $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(st.sid))}` : esc(sidLabel(st.sid));
     renderTranscript(); renderShots(); renderBeautify(); renderDoc();
     if (!recActive()) renderControl();
+    loadFrames();
   } catch (e) { /* ignore */ }
 }
 
@@ -314,6 +326,7 @@ function renderControl() {
         <div class="opt"><span class="opt-label">Auto-stop</span><input class="field num" id="minInp" type="number" min="1" value="${s.minutes || 180}"> min</div>
         ${pauseControl(s.pause || 1.5)}
         <label class="switch opt"><input type="checkbox" id="audioChk" ${s.save_audio ? 'checked' : ''}><span class="knob"></span>Save audio</label>
+        <label class="switch opt" title="Capture the screen every second and keep the frames that show something new"><input type="checkbox" id="autoChk" ${s.auto_frames ? 'checked' : ''}><span class="knob"></span>Auto frames</label>
       </div>`;
     $('#recBtn').onclick = startRecording;
     const nb = $('#newSessBtn'); if (nb) nb.onclick = newSession;
@@ -326,6 +339,7 @@ function renderControl() {
     $('#spkSel').onchange = e => { st.settings.speakers = e.target.value; };
     $('#minInp').onchange = e => { st.settings.minutes = +e.target.value || 180; };
     $('#audioChk').onchange = e => { st.settings.save_audio = e.target.checked; };
+    $('#autoChk').onchange = e => { st.settings.auto_frames = e.target.checked; };
     bindPause();
     return;
   }
@@ -364,7 +378,9 @@ function renderControl() {
     ${r.diarization ? '<span class="chip" title="Speaker diarization runs after the session">SPEAKERS</span>' : ''}
     <div class="spacer"></div>
     ${!mine ? `<span class="state-sub">Recording in <b>${esc(r.project)}</b></span>` : ''}
+    <button class="ghost-btn auto-btn${r.auto_frames ? ' on' : ''}" id="autoBtn" title="${r.auto_frames ? 'Stop automatic frames' : 'Capture the screen every second and keep the frames that show something new'}"><span class="auto-dot"></span>Auto${r.auto_frames && r.frame_stats && r.frame_stats.scenes != null ? ` · ${r.frame_stats.scenes}` : ''}</button>
     <button class="ghost-btn" id="snapBtn" title="Take a screenshot of the capture area">${ICON.camera}Snap</button>`;
+  $('#autoBtn').onclick = toggleAutoFrames;
   $('#recBtn').onclick = stopRecording;
   $('#muteBtn').onclick = toggleMute;
   $('#snapBtn').onclick = snap;
@@ -375,8 +391,10 @@ function renderControl() {
 
 function newSession() {
   st.sid = null; st.session = null; st.chat = { messages: [], busy: false };
+  applyVis(null);
   $('#sessionName').textContent = 'New session';
   renderAll();
+  loadFrames();
 }
 
 function pauseControl(v) {
@@ -508,7 +526,7 @@ async function startRecording() {
     }
     await api('POST', '/api/record/start', {
       project: st.project, engine, lang: s.lang || 'auto', speakers: s.speakers || 'auto',
-      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio,
+      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio, auto_frames: !!s.auto_frames,
       continue_sid: st.sid && st.session && !st.session.live ? st.sid : '',
     });
   } catch (e) { st.starting = false; renderControl(); fail(e); }
@@ -525,10 +543,131 @@ async function toggleMute() {
   try { await api('POST', '/api/record/mute', { muted }); }
   catch (e) { fail(e); if (btn) btn.disabled = false; }
 }
+async function toggleAutoFrames() {
+  const on = !st.recorder.auto_frames;
+  const btn = $('#autoBtn'); if (btn) btn.disabled = true;
+  try { await api('POST', '/api/record/auto', { on }); st.settings.auto_frames = on; }
+  catch (e) { fail(e); if (btn) btn.disabled = false; }
+}
 async function snap() { try { await api('POST', '/api/record/snap'); } catch (e) { fail(e); } }
 $('#snapSideBtn').onclick = snap;
 
 // ── Transcript ─────────────────────────────────────────────────────────────
+// ── Visibility: hidden lines / screenshots / frames are kept but left out of Beautify ──
+const VIS_FIELD = { line: 'lines', shot: 'shots', frame: 'frames' };
+const isHidden = (kind, key) => st.vis[VIS_FIELD[kind]].has(kind === 'frame' ? +key : String(key));
+function applyVis(v) {
+  v = v || {};
+  st.vis = { lines: new Set(v.lines || []), shots: new Set(v.shots || []), frames: new Set((v.frames || []).map(Number)) };
+}
+const EYE_TITLE = {
+  line: ['Hide this line: it stays here, faded, but Beautify leaves it out', 'Show this line again'],
+  shot: ['Hide this screenshot: Beautify leaves it out', 'Use this screenshot again'],
+  frame: ['Hide this frame: Beautify leaves it out', 'Use this frame again'],
+};
+const SIM_TITLE = {
+  line: 'Hide this line and the ones like it (same or nearly the same words)',
+  shot: 'Hide this picture and every one that looks like it (screenshots and frames)',
+  frame: 'Hide this frame and every picture that looks like it (frames and screenshots)',
+};
+const simBtn = (kind, key) => `<button class="sim-btn" data-sim="${kind}" data-key="${esc(key)}" title="${esc(SIM_TITLE[kind])}">${ICON.similar}</button>`;
+const tools = (kind, key) => `<span class="row-tools">${simBtn(kind, key)}${eyeBtn(kind, key)}</span>`;
+
+// "Such and similar" for lines: same words after normalising, or (longer lines) mostly the
+// same character trigrams — repeated phrases, recognizer hallucinations, filler like "угу".
+const normText = t => (t || '').toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
+function trigrams(s) { const g = new Set(), x = ` ${s} `; for (let i = 0; i < x.length - 2; i++) g.add(x.slice(i, i + 3)); return g; }
+function textSimilar(a, b, ga) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const wa = a.split(' '), wb = b.split(' ');
+  if (wa.length <= 3 || wb.length <= 3) {
+    const A = new Set(wa), B = new Set(wb);
+    return A.size === B.size && [...A].every(w => B.has(w));
+  }
+  if (Math.min(a.length, b.length) / Math.max(a.length, b.length) < 0.6) return false;
+  const gb = trigrams(b); let inter = 0;
+  ga.forEach(g => { if (gb.has(g)) inter++; });
+  return inter / (ga.size + gb.size - inter) >= 0.6;
+}
+
+async function hideSimilar(kind, key) {
+  if (!st.project || !st.sid) return;
+  try {
+    let undo, n;
+    if (kind === 'line') {
+      const target = (st.session.entries || []).find(e => e.key === key);
+      if (!target) return;
+      const a = normText(target.text), ga = trigrams(a);
+      const keys = [...new Set(st.session.entries.filter(e => (e.kind === 'speech' || e.kind === 'selection') && e.key
+        && e.kind === target.kind && textSimilar(a, normText(e.text), ga)).map(e => e.key))];
+      const fresh = keys.filter(k => !st.vis.lines.has(k));
+      fresh.forEach(k => st.vis.lines.add(k)); refreshVisDom();
+      applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'line', keys, hidden: true }));
+      n = fresh.length;
+      undo = async () => { applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'line', keys: fresh, hidden: false })); refreshVisDom(); };
+      toast(n > 1 ? `Hid ${n} similar lines` : n ? 'Hid this line (no similar ones)' : 'Already hidden', 'ok', 10000, n ? { label: 'Undo', fn: undo } : null);
+    } else {
+      toast('Looking for similar pictures…', 'info', 2500);
+      const r = await api('POST', sessUrl() + '/hide-similar', { kind, key });
+      applyVis(r.visibility);
+      const fr = r.hidden.frame || [], sh = r.hidden.shot || [];
+      n = fr.length + sh.length;
+      undo = async () => {
+        if (fr.length) applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'frame', keys: fr, hidden: false }));
+        if (sh.length) applyVis(await api('POST', sessUrl() + '/visibility', { kind: 'shot', keys: sh, hidden: false }));
+        refreshVisDom();
+      };
+      const parts = [fr.length ? `${fr.length} frame${fr.length > 1 ? 's' : ''}` : '', sh.length ? `${sh.length} screenshot${sh.length > 1 ? 's' : ''}` : ''].filter(Boolean);
+      toast(n ? `Hid ${parts.join(' and ')} that look alike` : 'Already hidden', 'ok', 10000, n ? { label: 'Undo', fn: undo } : null);
+    }
+    refreshVisDom();
+  } catch (e) { fail(e); }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.sim-btn');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  hideSimilar(b.dataset.sim, b.dataset.key);
+}, true);
+
+function eyeBtn(kind, key) {
+  const h = isHidden(kind, key);
+  return `<button class="eye-btn" data-eye="${kind}" data-key="${esc(key)}" title="${esc(EYE_TITLE[kind][h ? 1 : 0])}">${h ? ICON.eyeOff : ICON.eye}</button>`;
+}
+const visAttr = (kind, key) => `data-vis="${kind}:${esc(key)}"`;
+const hidCls = (kind, key) => (isHidden(kind, key) ? ' is-hidden' : '');
+
+function refreshVisDom() {
+  $$('[data-vis]').forEach(el => {
+    const i = el.dataset.vis.indexOf(':');
+    const kind = el.dataset.vis.slice(0, i), k = el.dataset.vis.slice(i + 1);
+    const h = isHidden(kind, k);
+    el.classList.toggle('is-hidden', h);
+    $$('.eye-btn', el).forEach(b => {
+      if (b.dataset.eye !== kind || b.dataset.key !== k) return;
+      b.innerHTML = h ? ICON.eyeOff : ICON.eye; b.title = EYE_TITLE[kind][h ? 1 : 0];
+    });
+  });
+  renderFramesBar();
+}
+
+async function toggleHidden(kind, key) {
+  if (!st.project || !st.sid) return;
+  const field = VIS_FIELD[kind], k = kind === 'frame' ? +key : String(key);
+  const hidden = !st.vis[field].has(k);
+  if (hidden) st.vis[field].add(k); else st.vis[field].delete(k);
+  refreshVisDom();
+  try { applyVis(await api('POST', sessUrl() + '/visibility', { kind, key: k, hidden })); refreshVisDom(); }
+  catch (e) { fail(e); if (hidden) st.vis[field].delete(k); else st.vis[field].add(k); refreshVisDom(); }
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('.eye-btn');
+  if (!b) return;
+  e.stopPropagation(); e.preventDefault();
+  toggleHidden(b.dataset.eye, b.dataset.key);
+}, true);
+
 function entryHtml(e, prev, isNew) {
   if (e.deleted) return '';
   const nw = isNew ? ' new' : '';
@@ -536,15 +675,23 @@ function entryHtml(e, prev, isNew) {
     const name = (e.path || '').split('/').pop();
     const shot = (st.session.screenshots || []).find(s => s.path === e.path);
     const url = shot && shot.url ? shot.url : null;
-    return `<div class="row shot-row${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body">
-      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot captured</b>${esc(name)}</span></div></div></div>`;
+    return `<div class="row shot-row${nw}${hidCls('shot', name)}" data-time="${esc(e.time)}" ${visAttr('shot', name)}><span class="t">${esc(e.time)}</span><div class="body">
+      <div class="shot-inline" data-path="${esc(e.path)}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Screenshot</b>${esc(name)}</span></div></div>${tools('shot', name)}</div>`;
   }
+  const k = e.key || '';
   if (e.kind === 'selection') {
-    return `<div class="row${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div></div>`;
+    return `<div class="row${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body"><div class="sel-quote"><span class="k">Selected text</span>${esc(e.text)}</div></div>${k ? tools('line', k) : ''}</div>`;
   }
   const cont = e.speaker != null && prev && prev.kind === 'speech' && prev.speaker === e.speaker;
   const spk = e.speaker != null ? `<div class="spk" style="--sc:${speakerColor(e.speaker)}">Speaker ${e.speaker}</div>` : '';
-  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}" data-time="${esc(e.time)}"><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div></div>`;
+  return `<div class="row${e.speaker != null ? ' has-spk' : ''}${cont ? ' cont' : ''}${nw}${hidCls('line', k)}" data-time="${esc(e.time)}" ${visAttr('line', k)}><span class="t">${esc(e.time)}</span><div class="body">${spk}<p>${esc(e.text)}</p></div>${k ? tools('line', k) : ''}</div>`;
+}
+
+// An auto frame shown in the transcript at the moment it appeared on screen.
+function frameRowHtml(g, isNew) {
+  const s = g.scene, url = s.last_url || s.url, t = hms(s.wall_start);
+  return `<div class="row shot-row frame-row${isNew ? ' new' : ''}${hidCls('frame', s.id)}" data-time="${esc(t)}" data-fid="${s.id}" ${visAttr('frame', s.id)}><span class="t">${esc(t)}</span><div class="body">
+    <div class="shot-inline frame-inline" data-fid="${s.id}">${url ? `<img src="${esc(url)}" alt="">` : ''}<span class="lbl"><b>Auto frame #${s.id}</b>on screen ${fmtSceneDur(g.duration)}${g.shows > 1 ? ` · shown ${g.shows}×` : ''}${s.cls ? ` · ${esc(s.cls)}` : ''}</span></div></div>${tools('frame', s.id)}</div>`;
 }
 
 function renderTranscript() {
@@ -557,8 +704,11 @@ function renderTranscript() {
     return;
   }
   // Display in time order: markers are written when flushed, which can be after a phrase that started earlier.
-  const sorted = entries.map((e, i) => [e, i]).sort((a, b) => (a[0].time < b[0].time ? -1 : a[0].time > b[0].time ? 1 : a[1] - b[1])).map(x => x[0]);
-  box.innerHTML = sorted.map((e, i) => entryHtml(e, sorted[i - 1], false)).join('') + '<div id="pipeline"></div><div id="ghost"></div>';
+  const items = entries.map((e, i) => ({ t: e.time, i, e }))
+    .concat(frameGroups().map((g, j) => ({ t: hms(g.scene.wall_start), i: -1, g })));
+  items.sort((a, b) => (a.t < b.t ? -1 : a.t > b.t ? 1 : a.i - b.i));
+  box.innerHTML = items.map((x, i) => x.g ? frameRowHtml(x.g, false) : entryHtml(x.e, items[i - 1] && items[i - 1].e, false)).join('')
+    + '<div id="pipeline"></div><div id="ghost"></div>';
   renderChunks();
   renderGhost();
   if (st.follow) box.scrollTop = box.scrollHeight;
@@ -616,6 +766,8 @@ $('#transcript').addEventListener('scroll', () => {
 });
 $('#jumpLive').onclick = () => { st.follow = true; const b = $('#transcript'); b.scrollTop = b.scrollHeight; $('#jumpLive').classList.add('hidden'); };
 $('#transcript').addEventListener('click', e => {
+  const fi = e.target.closest('.frame-inline');
+  if (fi) { openFrameLightbox(+fi.dataset.fid); return; }
   const si = e.target.closest('.shot-inline');
   if (si) openLightbox(si.dataset.path);
 });
@@ -646,8 +798,8 @@ function shotStages(s) {
 }
 function shotCardHtml(s, enter) {
   const url = s.url ? `${s.url}` : '';
-  return `<div class="shot-card${enter ? ' enter' : ''}" data-path="${esc(s.path)}">
-    <button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button>
+  return `<div class="shot-card${enter ? ' enter' : ''}${hidCls('shot', s.name)}" data-path="${esc(s.path)}" data-time="${esc(s.time)}" ${visAttr('shot', s.name)}>
+    <div class="card-tools">${simBtn('shot', s.name)}${eyeBtn('shot', s.name)}<button class="shot-del" data-del="${esc(s.path)}" title="Delete screenshot">${ICON.trash}</button></div>
     <div class="thumb" data-path="${esc(s.path)}">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}</div>
     <div class="shot-meta"><div class="top"><span class="time">${esc(s.time)}</span><span class="name">${esc(s.name)}</span></div>
     <ol class="pipeline">${shotStages(s).map(([l, c]) => `<li class="${c}" title="${esc(l)}">${esc(l)}</li>`).join('')}</ol></div></div>`;
@@ -688,7 +840,8 @@ function upsertShot(shot, isNew) {
 $('#shots').addEventListener('click', e => {
   const del = e.target.closest('.shot-del');
   if (del) { confirmDeleteShot(del.closest('.shot-card'), del.dataset.del); return; }
-  const t = e.target.closest('.thumb'); if (t) openLightbox(t.dataset.path);
+  const t = e.target.closest('.thumb'); if (t) { openLightbox(t.dataset.path); return; }
+  const card = e.target.closest('.shot-card'); if (card && card.dataset.time) jumpToTime(card.dataset.time);
 });
 
 function confirmDeleteShot(card, path) {
@@ -746,6 +899,168 @@ async function openLightbox(path) {
 }
 function closeLightbox() { $('#lightbox').classList.add('hidden'); }
 
+// ── Auto frames ────────────────────────────────────────────────────────────
+// Scenes come from autoframes.py (live: 'frame' events; saved: frames/<sid>/scenes.json).
+// A revisit (same_as) is the same image shown again: counted on its original card.
+const hms = iso => (iso || '').slice(11, 19);
+const secs = (a, b) => Math.max(0, (new Date(b) - new Date(a)) / 1000);
+const fmtSceneDur = s => s >= 60 ? `${Math.floor(s / 60)}m ${Math.round(s % 60)}s` : `${Math.round(s)}s`;
+
+// Frames belong to one session: cleared whenever the project or session changes.
+function resetFrames() { st.frames = { scenes: [], selection: null, stats: null, busy: false }; }
+
+async function loadFrames() {
+  if (!st.project || !st.sid) { resetFrames(); renderFrames(); return; }
+  const project = st.project;
+  const sid = st.sid;
+  try {
+    const d = await api('GET', sessUrl() + '/frames');
+    if (sid !== st.sid || project !== st.project) return;   // switched meanwhile
+    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+  } catch (_) { st.frames.scenes = []; st.frames.selection = null; }
+  st.frames.stats = isLive() ? st.recorder.frame_stats || null : null;
+  renderFrames();
+  if (st.frames.scenes.length) renderTranscript();   // frames sit in the transcript at their time
+}
+
+function upsertFrame(scene) {
+  const list = st.frames.scenes;
+  const i = list.findIndex(s => s.id === scene.id);
+  if (i >= 0) list[i] = { ...list[i], ...scene }; else list.push(scene);
+  renderFrames();
+  syncFrameRow(scene.same_as || scene.id, i < 0 && !scene.same_as);
+}
+
+// Keep the transcript's inline row for a frame in step (new / updated / shown again).
+function syncFrameRow(id, isNew) {
+  const box = $('#transcript');
+  if (!box || box.querySelector('.empty')) return;
+  const g = frameGroups().find(x => x.scene.id === id); if (!g) return;
+  const tmp = document.createElement('div'); tmp.innerHTML = frameRowHtml(g, isNew);
+  const row = tmp.firstElementChild;
+  const old = box.querySelector(`.row[data-fid="${id}"]`);
+  if (old) { old.replaceWith(row); return; }
+  const later = $$('#transcript .row[data-time]').find(r => r.dataset.time > row.dataset.time);
+  box.insertBefore(row, later || $('#pipeline'));
+  if (st.follow) box.scrollTop = box.scrollHeight;
+}
+
+function jumpToFrame(id) {
+  switchTab('live');
+  const row = $(`#transcript .row[data-fid="${id}"]`);
+  if (!row) return;
+  st.follow = false;
+  row.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  row.classList.add('flash');
+  setTimeout(() => row.classList.remove('flash'), 1400);
+}
+
+function frameGroups() {
+  const byId = new Map();
+  for (const s of st.frames.scenes) {
+    if (s.same_as) continue;
+    byId.set(s.id, { scene: s, shows: 1, duration: secs(s.wall_start, s.wall_end) });
+  }
+  for (const s of st.frames.scenes) {
+    const g = s.same_as && byId.get(s.same_as);
+    if (g) { g.shows++; g.duration += secs(s.wall_start, s.wall_end); }
+  }
+  return [...byId.values()];
+}
+
+function renderFramesBar() {
+  const bar = $('#framesBar');
+  const live = isLive();
+  const stats = st.frames.stats;
+  const groups = frameGroups();
+  const n = groups.length;
+  const used = groups.filter(g => !isHidden('frame', g.scene.id)).length;
+  let html = '';
+  if (live) {
+    const on = st.recorder.auto_frames;
+    html = `<div class="fb-stats">${on ? '<span class="auto-dot live"></span>' : ''}${stats
+      ? `<b>${stats.frames}</b> frames → <b>${stats.scenes}</b> scenes${stats.revisits ? ` · ${stats.revisits} repeats` : ''}${stats.l1 && stats.l1.faces ? ` · ${stats.l1.faces} faces skipped` : ''}${stats.l1 && !stats.l1.ready ? ' · smart filter loading' : ''} · <span class="fb-state">${esc(stats.state)}</span>`
+      : on ? 'Watching the screen…' : 'Auto frames are off'}</div>
+      ${st.recorder.state === 'listening' ? `<button class="ghost-btn small" id="fbAuto">${on ? 'Stop' : 'Start'} auto frames</button>` : ''}`;
+  } else if (n) {
+    const lastN = (st.frames.selection && st.frames.selection.n) || 10;
+    html = `<div class="fb-stats" title="Visible frames go to Beautify as screenshots, at their place in the transcript"><b>${used}</b> of ${n} frames go to Beautify</div>
+      <div class="fb-actions"><label class="fb-n">Best <input class="field num" id="fbN" type="number" min="1" max="100" value="${lastN}"></label>
+      <button class="ghost-btn small" id="fbPick" ${st.frames.busy ? 'disabled' : ''} title="Keep the N frames with the most said about them (pointing phrases, time on screen) and hide the rest. The eye brings any frame back.">${ICON.sparkle}Pick</button></div>`;
+  }
+  bar.innerHTML = html;
+  bar.classList.toggle('hidden', !html);
+  const a = $('#fbAuto'); if (a) a.onclick = toggleAutoFrames;
+  const p = $('#fbPick'); if (p) p.onclick = pickFrames;
+}
+
+function frameCardHtml(g) {
+  const s = g.scene;
+  const url = s.last_url || s.url;
+  const tags = [];
+  if (g.shows > 1) tags.push(`<span class="ftag" title="Shown ${g.shows} times">×${g.shows}</span>`);
+  if (s.last_path) tags.push('<span class="ftag" title="Changed while on screen; the card shows the last state">updated</span>');
+  if (s.scroll_of) tags.push(`<span class="ftag" title="Looks like a scrolled #${s.scroll_of}">scroll</span>`);
+  if (s.cls) tags.push(`<span class="ftag" title="Level 1 (CLIP) guess, ${Math.round((s.cls_score || 0) * 100)}%">${esc(s.cls)}</span>`);
+  if (s.features && s.features.deixis) tags.push(`<span class="ftag hot" title="${esc((s.deixis || []).join(' · '))}">“${s.features.deixis} pointer${s.features.deixis > 1 ? 's' : ''}”</span>`);
+  return `<div class="frame-card${s.selected ? ' picked' : ''}${hidCls('frame', s.id)}" data-id="${s.id}" ${visAttr('frame', s.id)} title="Show in the transcript">
+    <div class="card-tools">${simBtn('frame', s.id)}${eyeBtn('frame', s.id)}</div>
+    <div class="thumb" data-fid="${s.id}" title="Open">${url ? `<img src="${esc(url)}" loading="lazy" alt="">` : ''}${s.selected ? '<span class="pick-star" title="Picked">★</span>' : ''}</div>
+    <div class="shot-meta"><div class="top"><span class="time">${esc(hms(s.wall_start))}</span><span class="name">#${s.id} · ${fmtSceneDur(g.duration)}${s.score != null ? ` · score ${s.score.toFixed(1)}` : ''}</span></div>
+    <div class="ftags">${tags.join('')}</div></div></div>`;
+}
+
+function renderFrames() {
+  const groups = frameGroups();
+  $('#frameCount').textContent = groups.length || '';
+  renderFramesBar();
+  const box = $('#frames');
+  if (!groups.length) {
+    box.innerHTML = `<div class="empty"><div class="art">${ICON.camera}</div><h3>No auto frames</h3><p>Turn on <b>Auto frames</b> before or during a recording. The screen is captured every second; only frames that show something new and stay still are kept, talking heads and transitions are skipped.</p></div>`;
+    return;
+  }
+  if (isLive()) groups.reverse();
+  box.innerHTML = groups.map(frameCardHtml).join('');
+}
+
+async function pickFrames() {
+  const n = +($('#fbN') && $('#fbN').value) || 10;
+  st.frames.busy = true; renderFramesBar();
+  try {
+    const d = await api('POST', sessUrl() + '/frames/select', { n });
+    st.frames.scenes = d.scenes; st.frames.selection = d.selection;
+    st.vis.frames = new Set(d.scenes.filter(s => s.hidden && !s.same_as).map(s => s.id));
+  } catch (e) { fail(e); }
+  st.frames.busy = false; renderFrames(); refreshVisDom();
+}
+
+$('#frames').addEventListener('click', e => {
+  const t = e.target.closest('.thumb[data-fid]'); if (t) { openFrameLightbox(+t.dataset.fid); return; }
+  const card = e.target.closest('.frame-card'); if (card) jumpToFrame(+card.dataset.id);
+});
+
+function openFrameLightbox(id) {
+  const s = st.frames.scenes.find(x => x.id === id); if (!s) return;
+  const lb = $('#lightbox');
+  const f = s.features;
+  const info = [
+    `Shown ${hms(s.wall_start)}–${hms(s.wall_end)}`,
+    s.changed != null ? `${Math.round(s.changed * 100)}% different from the previous scene` : '',
+    s.mask_frac ? `${Math.round(s.mask_frac * 100)}% masked as moving (webcam)` : '',
+    f ? `${f.words} words spoken · ${f.deixis} pointing phrase${f.deixis === 1 ? '' : 's'}${s.deixis && s.deixis.length ? ': ' + s.deixis.join(' · ') : ''}` : '',
+    s.caption || '', s.ocr ? 'OCR:\n' + s.ocr : '',
+  ].filter(Boolean).join('\n');
+  const urls = [s.url, s.last_url].filter(Boolean);
+  lb.innerHTML = `<div class="lb-img${urls.length > 1 ? ' two' : ''}">${urls.map(u => `<img src="${esc(u)}" alt="">`).join('')}</div>
+    <div class="lb-side"><div class="lb-head"><div><b>${esc(hms(s.wall_start))}</b> <span style="color:#6b7480;font-size:12px">frame #${s.id}${s.last_url ? ' · first and last state' : ''}</span></div>
+    <div style="display:flex;gap:6px"><button class="ghost-btn small" id="lbJump">Find in transcript</button><button class="ghost-btn small" id="lbClose">Close</button></div></div>
+    <div class="lb-ocr">${esc(info)}</div></div>`;
+  lb.classList.remove('hidden');
+  $('#lbClose').onclick = closeLightbox;
+  $('#lbJump').onclick = () => { closeLightbox(); jumpToTime(hms(s.wall_start)); };
+  lb.onclick = e => { if (e.target === lb || e.target.classList.contains('lb-img')) closeLightbox(); };
+}
+
 // ── Beautify ───────────────────────────────────────────────────────────────
 const currentJob = () => (st.project && st.sid) ? st.jobs[key(st.project, st.sid)] : null;
 function versions() { return (st.session && st.session.manifest && st.session.manifest.versions) || []; }
@@ -800,6 +1115,25 @@ function openBeautifyMenu(anchor) {
     closeMenus(); runBeautify(b.dataset.mode);
   };
   openMenu(m, anchor, 'right');
+}
+
+// After a recording: ask before starting the (long) final Beautify run.
+function offerBeautify(project, sid) {
+  if (st.jobs[key(project, sid)] && st.jobs[key(project, sid)].status === 'running') return;
+  openModal(`<div class="modal-head"><h2>Recording finished</h2><p>Build the final beautified version of <b>${esc(sidLabel(sid))}</b> now?
+    Hidden lines, screenshots and frames are left out. You can always start it later with <b>Beautify</b>.</p></div>
+    <div class="modal-foot"><button class="ghost-btn" data-close>Not now</button><button class="primary-btn" id="offerGo">${ICON.sparkle}Build final version</button></div>`,
+  root => {
+    $('[data-close]', root).onclick = closeModal;
+    $('#offerGo', root).onclick = async () => {
+      closeModal();
+      try {
+        const job = await api('POST', sessUrl(project, sid) + '/beautify', { mode: 'final' });
+        st.jobs[key(job.project, job.sid)] = job;
+        renderBeautify(); renderDoc(); renderShots();
+      } catch (e) { fail(e); }
+    };
+  });
 }
 
 async function runBeautify(mode) {
@@ -999,9 +1333,18 @@ function renderCapturePop(waiting) {
       <button class="mode ${cfg.mode === 'window' ? 'on' : ''}" data-m="window">${ICON.window}Window<small>click a window</small></button>
     </div>
     ${waiting ? `<div class="waiting"><span class="spinner"></span>${waiting}</div>` : ''}
-    <div class="preview">${st.capture && st.capture.preview ? `<img src="${esc(st.capture.preview)}" alt="Capture preview">` : '<span class="state-sub">No preview yet</span>'}<span class="pv-label">${esc(label)}</span></div>
+    <div class="preview" id="pvBox">${st.capture && st.capture.preview
+      ? `<div class="pv-stage" id="pvStage"><img id="pvImg" src="${esc(st.capture.preview)}" alt="Capture preview">${cfg.frames_crop ? cropBoxHtml(cfg.frames_crop) : ''}</div>`
+      : '<span class="state-sub">No preview yet</span>'}<span class="pv-label">${esc(label)}</span></div>
     <div class="pop-row"><button class="ghost-btn small" id="winListBtn">Choose from window list</button><button class="ghost-btn small" id="pvRefresh">Refresh preview</button></div>
+    <div class="crop-row">${cfg.frames_crop
+      ? `<span><b>Auto frames:</b> the framed part only <span class="state-sub" id="cropInfo">(${cropInfo(cfg)}) · drag to move, edges to resize</span></span><span class="crop-btns"><button class="ghost-btn small" id="detectBtn">Detect again</button><button class="ghost-btn small" id="cropReset">Use whole area</button></span>`
+      : `<span class="state-sub">Auto frames use the whole area. If the video is only part of it (a browser or call window), detect it so slide changes aren't drowned out by the page.</span><span class="crop-btns"><button class="ghost-btn small" id="cropHand">Set by hand</button><button class="ghost-btn small" id="detectBtn">Detect video</button></span>`}</div>
     <div class="win-list hidden" id="winList"></div>`;
+  $('#detectBtn').onclick = detectVideo;
+  const cr = $('#cropReset'); if (cr) cr.onclick = () => saveCrop(null);
+  const ch = $('#cropHand'); if (ch) ch.onclick = () => saveCrop({ x: 0.15, y: 0.15, w: 0.7, h: 0.7 });
+  bindCropEditor();
   $$('.mode', pop).forEach(b => b.onclick = () => chooseCapture(b.dataset.m));
   $('#pvRefresh').onclick = async () => { try { st.capture = await api('POST', '/api/capture/preview'); renderCapturePop(); } catch (e) { fail(e); } };
   $('#winListBtn').onclick = async () => {
@@ -1017,6 +1360,81 @@ function renderCapturePop(waiting) {
       });
     } catch (e) { fail(e); }
   };
+}
+// ── Auto-frames crop editor (on the capture preview) ───────────────────────
+const cropInfo = cfg => `${Math.round(cfg.frames_crop.w * 100)}% × ${Math.round(cfg.frames_crop.h * 100)}%${cfg.frames_crop_method ? ', ' + esc(cfg.frames_crop_method) : ''}`;
+const CROP_HANDLES = ['n', 's', 'e', 'w', 'ne', 'nw', 'se', 'sw'];
+function cropBoxHtml(c) {
+  return `<div class="crop-box" id="cropBox" style="left:${c.x * 100}%;top:${c.y * 100}%;width:${c.w * 100}%;height:${c.h * 100}%" title="Drag to move · drag an edge or corner to resize">
+    ${CROP_HANDLES.map(h => `<span class="ch ch-${h}" data-h="${h}"></span>`).join('')}</div>`;
+}
+
+async function saveCrop(crop) {
+  try {
+    st.capture = await api('POST', '/api/capture/crop', crop ? { crop } : {});
+    if (crop && crop.w === 0.7 && crop.h === 0.7) toast('Drag the frame onto the video', 'ok');
+  } catch (e) { fail(e); }
+  renderCapturePop();
+}
+
+// Size the stage to the image as displayed (object-fit: contain), so the crop's percentages
+// line up with the picture; then let the frame be dragged and resized.
+function bindCropEditor() {
+  const img = $('#pvImg'), stage = $('#pvStage'), box = $('#pvBox');
+  if (!img || !stage) return;
+  const fit = () => {
+    if (!img.naturalWidth) return;
+    const s = Math.min(box.clientWidth / img.naturalWidth, box.clientHeight / img.naturalHeight);
+    stage.style.width = `${img.naturalWidth * s}px`;
+    stage.style.height = `${img.naturalHeight * s}px`;
+  };
+  if (img.complete) fit(); else img.onload = fit;
+  const cb = $('#cropBox'); if (!cb) return;
+  cb.addEventListener('pointerdown', e => {
+    e.preventDefault(); e.stopPropagation();
+    const mode = e.target.dataset.h || 'move';
+    const r = stage.getBoundingClientRect();
+    const start = { ...st.capture.config.frames_crop };
+    const px = e.clientX, py = e.clientY;
+    cb.setPointerCapture(e.pointerId);
+    cb.classList.add('dragging');
+    let cur = start;
+    const MIN = 0.05;
+    const move = ev => {
+      const dx = (ev.clientX - px) / r.width, dy = (ev.clientY - py) / r.height;
+      let { x, y, w, h } = start;
+      if (mode === 'move') {
+        x = Math.min(Math.max(0, x + dx), 1 - w); y = Math.min(Math.max(0, y + dy), 1 - h);
+      } else {
+        if (mode.includes('w')) { const nx = Math.min(Math.max(0, x + dx), x + w - MIN); w += x - nx; x = nx; }
+        if (mode.includes('e')) w = Math.min(Math.max(MIN, w + dx), 1 - x);
+        if (mode.includes('n')) { const ny = Math.min(Math.max(0, y + dy), y + h - MIN); h += y - ny; y = ny; }
+        if (mode.includes('s')) h = Math.min(Math.max(MIN, h + dy), 1 - y);
+      }
+      cur = { x, y, w, h };
+      Object.assign(cb.style, { left: `${x * 100}%`, top: `${y * 100}%`, width: `${w * 100}%`, height: `${h * 100}%` });
+      const info = $('#cropInfo'); if (info) info.textContent = `(${Math.round(w * 100)}% × ${Math.round(h * 100)}%, manual) · drag to move, edges to resize`;
+    };
+    const up = () => {
+      cb.removeEventListener('pointermove', move);
+      cb.removeEventListener('pointerup', up);
+      cb.removeEventListener('pointercancel', up);
+      cb.classList.remove('dragging');
+      if (cur !== start) saveCrop(cur);
+    };
+    cb.addEventListener('pointermove', move);
+    cb.addEventListener('pointerup', up);
+    cb.addEventListener('pointercancel', up);
+  });
+}
+
+async function detectVideo() {
+  renderCapturePop('Watching the capture area for ~6 s · keep the video playing');
+  try {
+    st.capture = await api('POST', '/api/capture/detect-video');
+    toast('Auto frames will keep only the video area', 'ok');
+  } catch (e) { fail(e); }
+  renderCapturePop();
 }
 async function chooseCapture(mode) {
   try {
@@ -1063,11 +1481,13 @@ async function openSettings() {
         <div class="frow"><label>Beautify engine</label><select class="field" id="setEngine"><option value="claude" ${s.beautify_engine !== 'api' ? 'selected' : ''}>Claude Code (recommended)</option><option value="api" ${s.beautify_engine === 'api' ? 'selected' : ''}>Gemini / OpenAI API (single pass, no tools)</option></select></div>
         <div class="frow"><label>Beautify model</label><select class="field" id="setBModel">${modelOpts(s.beautify_model)}</select></div>
         <div class="frow"><label>Chat model</label><select class="field" id="setCModel">${modelOpts(s.chat_model)}</select></div>
-        <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Build the final version automatically when recording stops</label></div>
+        <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Offer to build the final version when recording stops</label></div>
       </fieldset>
       <fieldset class="fset"><legend>Recognizer</legend>
         <div class="frow"><label>Python</label><div style="display:flex;gap:8px"><input class="field" id="setPy" value="${esc(s.recorder_python)}" placeholder="Same as the server"><button class="ghost-btn small" id="checkPy" style="height:30px">Check</button></div>
           <div class="help">The interpreter that has faster-whisper, torch and easyocr installed. <span id="checkRes" class="check-res"></span></div></div>
+        <div class="frow"><label>Auto frames</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setL1" ${s.frames_l1 !== false ? 'checked' : ''}><span class="knob"></span>Smart filter (CLIP): drop webcam faces, merge look-alike frames</label>
+          <div class="help">Applies to the next recording. Off = pixel comparison only.</div></div>
       </fieldset>
     </div>
     <div class="modal-foot"><button class="ghost-btn" data-close>Cancel</button><button class="primary-btn" id="saveSettings">Save</button></div>`,
@@ -1084,6 +1504,7 @@ async function openSettings() {
         st.settings = await api('POST', '/api/settings', {
           beautify_engine: $('#setEngine').value, beautify_model: $('#setBModel').value, chat_model: $('#setCModel').value,
           auto_final_beautify: $('#setAuto').checked, recorder_python: $('#setPy').value.trim(),
+          frames_l1: $('#setL1').checked,
         });
         if (st.project) await api('POST', `/api/projects/${encodeURIComponent(st.project)}/settings`, {
           context_dir: $('#setCtx').value.trim(), style_reference: $('#setStyle').value.trim(),
@@ -1120,6 +1541,7 @@ function switchSide(side) {
   $$('#sideTabs .tab').forEach(b => b.classList.toggle('active', b.dataset.side === side));
   $('#side-shots').classList.toggle('hidden', side !== 'shots');
   $('#side-chat').classList.toggle('hidden', side !== 'chat');
+  $('#side-frames').classList.toggle('hidden', side !== 'frames');
   $('#side-notes').classList.toggle('hidden', side !== 'notes');
   $('#notesState').classList.toggle('hidden', side !== 'notes');
   if (side === 'chat') { $('#chatDot').classList.add('hidden'); renderChat(); setTimeout(() => $('#chatInput').focus(), 0); }
@@ -1143,7 +1565,7 @@ function addLog(line) {
 }
 
 function renderAll() {
-  renderControl(); renderTranscript(); renderShots(); renderBeautify(); renderDoc(); renderChat(); renderSessionMenu();
+  renderControl(); renderTranscript(); renderShots(); renderFrames(); renderBeautify(); renderDoc(); renderChat(); renderSessionMenu();
 }
 
 // ── WebSocket ──────────────────────────────────────────────────────────────
@@ -1204,6 +1626,18 @@ async function handle(m) {
       break;
     case 'log':
       addLog(m.line);
+      break;
+    case 'frame':
+      if (m.project === st.project && m.sid === st.sid) upsertFrame(m.scene);
+      break;
+    case 'visibility':
+      if (m.project === st.project && m.sid === st.sid) { applyVis(m.visibility); refreshVisDom(); }
+      break;
+    case 'offer_beautify': offerBeautify(m.project, m.sid); break;
+    case 'frame_stats':
+      st.recorder.frame_stats = m;
+      if (m.project === st.project && m.sid === st.sid) { st.frames.stats = m; renderFramesBar(); }
+      { const b = $('#autoBtn'); if (b && st.recorder.auto_frames) b.lastChild.textContent = `Auto · ${m.scenes}`; }
       break;
     case 'session_changed':
       if (m.project === st.project) {

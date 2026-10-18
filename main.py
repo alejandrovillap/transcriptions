@@ -64,6 +64,7 @@ pending_injections: queue.Queue[str] = queue.Queue()
 audio_chunks: list[np.ndarray] = []
 save_audio_flag = False
 mic_muted = threading.Event()   # set via --control-stdin MUTE/UNMUTE
+live_frames = None   # autoframes.LiveFrames once auto frames are switched on (--auto-frames / AUTO ON)
 
 
 def load_models(engine_name="whisper", asr_model=None):
@@ -603,6 +604,15 @@ def helper_reader(proc):
             pending_injections.put(marker)
             ocr_queue.put(path)
             events.emit("screenshot", path=path)
+        elif line.startswith("FRAME:"):
+            path = line[len("FRAME:"):]
+            if live_frames is not None:
+                live_frames.put(path)
+            else:   # stray frame after AUTO OFF
+                try:
+                    os.unlink(path)
+                except OSError:
+                    pass
         elif line.startswith("SELECTION:"):
             b64text = line[len("SELECTION:"):]
             try:
@@ -612,6 +622,27 @@ def helper_reader(proc):
             except Exception as e:
                 print(f"[selection error] {e}", file=sys.stderr)
 
+
+
+def start_live_frames(frames_dir: Path, session_start: datetime, level1: bool = True):
+    from autoframes import LiveFrames   # imported on demand: OpenCV is only needed for auto frames
+    def on_scene(scene, kind):
+        if kind in ("new", "revisit", "drift"):
+            wall = datetime.fromisoformat(scene.wall_start).strftime("%H:%M:%S")
+            label = {"new": f"frame #{scene.id}", "revisit": f"frame #{scene.id} = #{scene.same_as}",
+                     "drift": f"frame #{scene.id} updated"}[kind]
+            sys.stdout.write(f"\r\033[K[{wall}] [{label}]\n")
+            sys.stdout.flush()
+        events.emit("frame_scene", kind=kind, id=scene.id, path=scene.path, last_path=scene.last_path,
+                    same_as=scene.same_as, scroll_of=scene.scroll_of, t_start=round(scene.t_start, 2),
+                    t_end=round(scene.t_end, 2), wall_start=scene.wall_start, wall_end=scene.wall_end,
+                    changed=scene.changed, mask_frac=scene.mask_frac, cls=scene.cls,
+                    cls_score=scene.cls_score)
+
+    def on_stats(stats):
+        events.emit_throttled("frame_stats", 1.0, "frame_stats", **stats)
+
+    return LiveFrames(frames_dir, session_start, on_scene=on_scene, on_stats=on_stats, level1=level1)
 
 
 def shift_session_times(data, delta):
@@ -731,6 +762,12 @@ def main():
     parser.add_argument("--asr-model", default=None,
                         help="Override the engine's model: a Whisper size, or an onnx-asr model name "
                              "(e.g. gigaam-v3-e2e-ctc)")
+    parser.add_argument("--auto-frames", type=float, default=0, metavar="SEC",
+                        help="Capture the screen every SEC seconds and keep the frames that show "
+                             "something new (projects/<project>/frames/<session>/); 0 = off. "
+                             "With --control-stdin it can also be toggled with AUTO ON/OFF")
+    parser.add_argument("--no-frames-l1", action="store_true",
+                        help="Auto frames without Level 1 (CLIP: drops faces, merges look-alike frames)")
     parser.add_argument("--vocab-correct", action="store_true",
                         help='Replace "heard" phrases from --vocab-file with the "meant" ones in the output '
                              "(useful with gigaam/parakeet, which have no hotwords)")
@@ -895,6 +932,27 @@ def main():
     )
     helper_thread.start()
 
+    frames_dir = project_dir / "frames" / timestamp
+    frames_interval = args.auto_frames or 1.0
+    frames_lock = threading.Lock()
+
+    def set_auto_frames(on: bool):
+        global live_frames
+        with frames_lock:
+            if on and live_frames is None:
+                live_frames = start_live_frames(frames_dir, session_data["start_time"],
+                                                level1=not args.no_frames_l1)
+            try:
+                screenshot_proc.stdin.write(f"AUTO {frames_interval}\n" if on else "AUTO OFF\n")
+                screenshot_proc.stdin.flush()
+            except Exception as e:
+                print(f"[frames] helper command failed: {e}", file=sys.stderr)
+        print(f"\r\033[K[frames] auto {'on' if on else 'off'}")
+        events.emit("auto_frames", on=on, interval=frames_interval, dir=str(frames_dir.resolve()))
+
+    if args.auto_frames > 0:
+        set_auto_frames(True)
+
     if args.control_stdin:
         def control_reader():
             for line in sys.stdin:
@@ -920,6 +978,8 @@ def main():
                         mic_muted.clear()
                     print(f"\r\033[K[mic] {'muted' if cmd == 'MUTE' else 'live'}")
                     events.emit("muted", muted=cmd == "MUTE")
+                elif cmd in ("AUTO ON", "AUTO OFF"):
+                    set_auto_frames(cmd == "AUTO ON")
                 elif cmd == "STOP":
                     events.emit("status", state="stopping")
                     stop_event.set()
@@ -943,6 +1003,11 @@ def main():
     finally:
         auto_stop_timer.cancel()
         screenshot_proc.terminate()
+        if live_frames is not None:
+            live_frames.close()
+            print(f"[frames] {len(live_frames.store.scenes)} scene(s): {live_frames.store.json_path}")
+        for leftover in (screenshot_dir / ".frames").glob("frame_*.jpg"):
+            leftover.unlink(missing_ok=True)
         stream.stop()
         stream.close()
         events.emit("status", state="finalizing", detail="Transcribing remaining speech")

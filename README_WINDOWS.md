@@ -82,6 +82,30 @@ referencia corregido a mano, la tasa de error WER/CER):
 
 (GigaAM, el tercer motor del autor, solo reconoce ruso y está desactivado en esta versión.)
 
+## Capturas automáticas (auto frames)
+
+En vez de pulsar `Ctrl+Shift+S`, la pantalla se captura cada segundo y solo se guardan los momentos
+que muestran algo nuevo. Se activa con el interruptor **Auto frames** antes de grabar, con el botón
+**Auto** durante la grabación o con `--auto-frames 1` en consola.
+
+- **Nivel 0 (píxeles):** solo cuenta una imagen cuando la pantalla se ha quedado quieta después de
+  un cambio, así que las transiciones, el scroll o alguien tecleando no generan capturas. Detecta
+  cuando se **vuelve** a una diapositiva anterior y cuando una diapositiva **se actualiza**, por
+  ejemplo al aparecer un punto nuevo.
+- **Nivel 1 (CLIP):** clasifica cada escena (diapositiva, diagrama, código, web, documento…),
+  descarta las caras de la webcam y junta las que son casi iguales. La primera vez descarga el
+  modelo (~600 MB).
+- **Detect video** (en el menú de captura): si capturas una ventana entera de Teams o del
+  navegador, encuentra el reproductor y recorta las capturas automáticas a él. El recorte también
+  se puede ajustar a mano con el ratón sobre la vista previa.
+- Pestaña **Frames**: **Pick** se queda con las N escenas de las que más se habló. Para decidirlo
+  cuenta frases como "como pueden ver", "en esta diapositiva" o "as you can see" y el tiempo en
+  pantalla. Las escenas visibles entran en Beautify como capturas.
+- **Ocultar**: cada línea, captura o escena tiene un ojo para ocultarla; lo oculto no entra en
+  Beautify. Otro botón oculta también todas las parecidas, con opción de deshacer.
+
+Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
+
 ## Otras funciones de esta versión
 
 - **Pausar el micrófono** (botón *Pause* / *Resume*) sin detener la grabación: el tiempo sigue

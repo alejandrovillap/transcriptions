@@ -25,8 +25,7 @@ from pathlib import Path
 
 import claude_cli
 from sessions import (
-    ROOT, latest_version, load_manifest, load_notes, load_project_settings, load_settings, notes_path,
-    read_transcript,
+    ROOT, beautify_text, latest_version, load_manifest, load_notes, load_project_settings, load_settings, notes_path,
     parse_transcript, project_dir, save_manifest, session_dir, shot_time,
     sid_datetime, transcript_path,
 )
@@ -104,7 +103,8 @@ def prepare(project: str, sid: str, mode: str = "update", live: bool = False) ->
 
     v = max([x["v"] for x in manifest["versions"]] + [0]) + 1
     snapshot = sdir / f"input_v{v}.txt"
-    text = read_transcript(project, sid)
+    # Without the lines/screenshots hidden in the UI, with the visible auto frames.
+    text = beautify_text(project, sid)
     snapshot.write_text(text, encoding="utf-8")
     entries = parse_transcript(text)
     raw_lines = text.splitlines()
@@ -114,7 +114,8 @@ def prepare(project: str, sid: str, mode: str = "update", live: bool = False) ->
     shots = []
     for e in entries:
         if e["kind"] == "screenshot" and Path(e["path"]).exists():
-            shots.append({"path": e["path"], "time": shot_time(e["path"]) or e["time"]})
+            auto = Path(e["path"]).name.startswith("frame_")   # auto frame: its line has the on-screen time
+            shots.append({"path": e["path"], "time": e["time"] if auto else (shot_time(e["path"]) or e["time"])})
 
     out = sdir / f"v{v}.html"
     style = Path(psettings["style_reference"]).expanduser() if psettings["style_reference"] else DEFAULT_STYLE
@@ -262,6 +263,7 @@ def _copy_to_docs(project: str, sid: str, out: Path, rec: dict, manifest: dict) 
     html = out.read_text(encoding="utf-8")
     # vN.html lives in sessions/<sid>/, docs/ is one level closer to screenshots/
     html = html.replace('src="../../screenshots/', 'src="../screenshots/')
+    html = html.replace('src="../../frames/', 'src="../frames/')
     target.write_text(html, encoding="utf-8")
     return target
 

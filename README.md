@@ -236,6 +236,52 @@ python bench_asr.py projects/myproject/recording_20261007_083740.mp3 --start 60 
 
 `--ref` is a hand-corrected transcript of the same range; with it the script reports WER/CER. Per-engine transcripts go to `bench_out/`.
 
+## Auto frames
+
+Instead of (or besides) pressing the hotkey, the screen can be captured every second and only the frames worth keeping are stored. Turn it on with `--auto-frames 1`, the **Auto frames** switch before recording, or the **Auto** button while recording.
+
+```bash
+python main.py myproject 60 --auto-frames 1
+```
+
+How frames are filtered (`autoframes.py`, Level 0, pixels only, ~20 ms per frame):
+
+- a frame becomes a candidate only after the screen has stood still for 1.5 s after a change, so transitions, scrolling in progress, typing and talking heads never qualify;
+- regions that keep moving (a webcam picture-in-picture) are masked out; a mostly-moving frame is treated as video and skipped; a still frame with motion and little detail elsewhere is treated as a camera view and skipped;
+- a candidate opens a new *scene* if its changed area differs from the current scene by more than 3%, otherwise it extends the scene (or, between 0.5% and 3%, replaces the scene's "last state" image, e.g. a form being filled in);
+- going back to a recent slide is recorded as a revisit (`same_as`), a vertically shifted frame is marked `scroll_of`.
+
+**Detect video** (capture popover). When the capture is a whole browser or call window, most of it is static page and the video is one rectangle, so slide changes look tiny and slides get merged. With the video playing, *Detect video* watches the area for ~6 s and finds the player (`video_detect.py`): a decoded video flickers by a level or two even on a still slide while a rendered page is bit-for-bit static, so the flickering blob is the video; it is snapped to the player border if one is visible, otherwise grown to a video aspect ratio and padded. A paused video is found by its border alone. The crop is drawn on the capture preview: drag it to move, drag an edge or corner to resize (or *Set by hand* without detecting); it takes effect on the next frame, even mid-recording. The crop (`frames_crop` in the capture config, fractions of the area) applies to auto frames only; screenshots stay whole; choosing another capture area resets it.
+
+Besides the changed area, a candidate also counts as a new scene when more than half of the slide's *content* changed (a new title on a dark, almost empty slide), and drift is measured from the scene's first state too, so small steps can't add up to swallowing a slide.
+
+Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs) and shown in the transcript at the moment they appeared (marked *auto*); clicking a card in the **Frames** tab scrolls the transcript there. The transcript file itself is not changed.
+
+**Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. Next to the eye, a second button hides **this and the ones like it** in one click (Undo in the notice): for lines, the same words after normalising, or mostly the same character trigrams for longer ones (recognizer hallucinations, repeated phrases, "угу"); for pictures, every screenshot and frame whose CLIP embedding is ≥ 0.88 to it (`similar.py`; the same talking head at different times was ≥ 0.93, different slides ≤ 0.84). Embeddings are cached in `.emb/` next to the images; Level 1 writes them while recording. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
+
+```bash
+python select_frames.py myproject 20261016_120000 -n 10 --apply
+```
+
+When a recording stops, the UI asks whether to build the final version (Settings → *Offer to build the final version*); "Not now" leaves the **Beautify** button for later.
+
+To tune thresholds on a recorded talk (and measure recall against hand-made screenshots of it):
+
+```bash
+python autoframes.py talk.mp4 --out /tmp/frames [--truth projects/x/screenshots] [--scene-frac 0.03 ...]
+```
+
+It writes `index.html` with every scene for a quick look.
+
+**Level 1** (`frames_l1.py`, on by default) runs CLIP ViT-B/32 (~14 ms per candidate on MPS, downloaded once, ~600 MB) on each Level-0 candidate:
+
+- zero-shot class (slide, diagram, table, code, web, document, face, desktop), shown on the frame cards; a frame that is mostly a face, a webcam or a video call is dropped (`p(face) ≥ 0.6`);
+- semantic dedup: a candidate with cosine ≥ 0.92 to a recent scene is that scene again (its "last state", or a revisit); 0.85–0.92 is kept but marked `l1_near`, and **Pick** takes only one of such a pair.
+
+On a slide talk, different slides were ≤ 0.84 apart and the same slide later ≥ 0.966. Turn it off with `--no-frames-l1` (console), the *Smart filter* switch in Settings (web UI), or `--no-l1` (offline); if the model can't load, auto frames run on Level 0 alone.
+
+Planned: Level 2 (OCR + VLM caption) as an `Enricher`, and a final pick by a text LLM over the transcript and scene list.
+
 ## Configuration
 
 Key constants in `main.py`:
@@ -256,6 +302,11 @@ Key constants in `main.py`:
 |---|---|
 | `main.py` | Main app: audio capture, VAD, transcription, screenshot integration |
 | `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
+| `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
+| `video_detect.py` | Find the playing video in a captured window (crop for auto frames) |
+| `similar.py` | "Hide this and similar" for pictures (CLIP embeddings, cached) |
+| `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
+| `select_frames.py` | Score scenes against the transcript, keep the best N visible (hide the rest) |
 | `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |
 | `screenshot_helper.swift` | Native macOS helper for global hotkeys and screen capture |
 | `speaker_id.py` | Speaker embedding (ECAPA-TDNN) and agglomerative clustering |
