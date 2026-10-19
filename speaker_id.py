@@ -191,13 +191,16 @@ def smooth_turns(words):
                 runs[-1][1] = i + 1
             else:
                 runs.append([i, i + 1, w.speaker])
-        for k in range(1, len(runs) - 1):
-            a, b, spk = runs[k]
-            if runs[k - 1][2] != runs[k + 1][2]:
-                continue
+        # One pass relabels every short turn; a relabelled turn joins its neighbours, so
+        # the next run is skipped and re-checked on the next pass (linear per pass).
+        k = 1
+        while k < len(runs) - 1:
+            a, b, _ = runs[k]
             dur = words[b - 1].t_end - words[a].t_start
-            if b - a <= MIN_TURN_WORDS or dur < MIN_TURN_SEC:
+            if runs[k - 1][2] == runs[k + 1][2] and (b - a <= MIN_TURN_WORDS or dur < MIN_TURN_SEC):
                 for w in words[a:b]:
                     w.speaker = runs[k - 1][2]
                 changed = True
-                break
+                k += 2
+            else:
+                k += 1

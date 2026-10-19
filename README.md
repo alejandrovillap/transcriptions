@@ -205,7 +205,7 @@ Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
   cortos dan una "huella" poco fiable y se asignan al hablante más parecido). Un "hablante" con
   menos de 4 s de voz se une al más cercano, y los cambios de hablante de una o dos palabras entre
   dos turnos de la misma persona se corrigen. Para rehacerlo sobre una sesión ya grabada:
-  `.venv\Scripts\python rediarize.py <proyecto> [--speakers N]` (escribe un `.diarized.txt`).
+  `.venv\Scripts\python rediarize.py <proyecto> [--speakers N]` (escribe el resultado en `transcripts\rediarized\`, sin tocar la transcripción).
 - **Notas del proyecto** (pestaña *Notas*): contexto y correcciones "se oyó → debe ser" que usan la
   versión anotada, la minuta, el chat y el reconocimiento en vivo.
 - **Preguntar**: chat sobre la reunión mientras sigue la grabación.

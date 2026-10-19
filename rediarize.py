@@ -224,8 +224,10 @@ def main():
         print("No words to label.", file=sys.stderr)
         sys.exit(1)
 
+    # In a subfolder: anything named transcript_*.txt in transcripts/ is listed as a session.
     transcript_path = Path(data["transcript_path"])
-    output_path = transcript_path.with_suffix(".diarized.txt")
+    output_path = transcript_path.parent / "rediarized" / transcript_path.name
+    output_path.parent.mkdir(exist_ok=True)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"Diarized transcript: {output_path}")
 

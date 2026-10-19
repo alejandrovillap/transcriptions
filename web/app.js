@@ -510,7 +510,7 @@ const ENGINES = {
   whisper: { name: 'Whisper turbo', short: 'WHISPER' },
   parakeet: { name: 'Parakeet v3 (EN+ES, fast)', short: 'PARAKEET' },  // EN/ES: wrong-language phrases are redone with Whisper
 };
-// Parakeet always detects the language itself, so only "Auto" applies to it.
+// An engine flagged autoLang only offers "Auto" (none is today: Parakeet's EN/ES fall back to Whisper).
 const engineBlocksLang = (engine, lang) => !!ENGINES[engine || 'whisper']?.autoLang && lang !== 'auto';
 
 async function startRecording() {
