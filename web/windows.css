@@ -1,0 +1,47 @@
+/* Windows build: look & feel fixes on top of the author's style.css.
+   Loaded after style.css, so upstream merges stay easy: style.css itself is left untouched. */
+
+/* ── 1. Contrast (WCAG AA ≥ 4.5:1 for text) ─────────────────────────────────
+   --faint is used for labels (ENGINE, LANGUAGE…), counters and secondary lines; it was
+   3.1:1 in dark and 2.6:1 in light. The record button's white text was 3.2:1 / 4.2:1. */
+:root { --faint: #6a6f78; --rec-btn: #d73546; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --faint: #7e848f; --rec-btn: #d13f4d; }
+}
+:root[data-theme="dark"] { --faint: #7e848f; --rec-btn: #d13f4d; }
+
+/* version badges (v2, m1): accent text on accent-soft was 4.46:1 in light */
+.tab-badge { color: color-mix(in srgb, var(--accent) 85%, var(--ink)); }
+
+.rec-btn {
+  background: var(--rec-btn);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, .2) inset, 0 6px 18px color-mix(in srgb, var(--rec-btn) 35%, transparent);
+}
+
+/* ── 2. Main panel header: tabs never sit under the Beautify status ─────────
+   With three tabs (Transcript, Beautified, Minutes) the tabs overflowed below the status
+   text in narrow windows. Tabs keep their width; the status shrinks, then hides. */
+.main-panel .panel-head { min-width: 0; }
+.main-panel .tabs { flex: 0 0 auto; }
+.main-panel .beautify-ctl { flex: 1 1 auto; min-width: 0; justify-content: flex-end; }
+.main-panel .b-status { min-width: 0; overflow: hidden; }
+.main-panel .b-status .s1,
+.main-panel .b-status .s2 { max-width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+.main-panel .b-status .s1 .check { display: inline-grid; vertical-align: -3px; margin-right: 6px; }
+@media (max-width: 640px) {
+  .main-panel .b-status { display: none; }       /* the Beautify button and the tab badge remain */
+  .main-panel .tab { padding: 0 9px; }
+}
+
+/* ── 3. Visible keyboard focus ──────────────────────────────────────────────
+   Only text fields had a focus style; buttons, tabs, links and switches had none. */
+:where(button, a, [role="button"], [tabindex], summary, .tab, .seg button):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+/* The switches hid their checkbox with display:none, so Tab skipped them entirely.
+   Keep it invisible but focusable, and show the focus ring on the knob. */
+.switch { position: relative; }
+.switch input { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
+.switch input:focus-visible + .knob { outline: 2px solid var(--accent); outline-offset: 2px; }

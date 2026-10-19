@@ -1475,7 +1475,7 @@ async function openSettings() {
     <div class="modal-head"><h2>Settings</h2><p>Beautify and chat run through Claude Code${st.claude ? '' : ' <b style="color:var(--rec)">(claude CLI not found)</b>'}, so they can view screenshots and use your MCP servers.</p></div>
     <div class="modal-body">
       ${st.project ? `<fieldset class="fset"><legend>Project · ${esc(st.project)}</legend>
-        <div class="frow"><label>Knowledge folder</label><input class="field" id="setCtx" value="${esc(ps.context_dir)}" placeholder="/Users/you/Documents/CLIENT">
+        <div class="frow"><label>Knowledge folder</label><input class="field" id="setCtx" value="${esc(ps.context_dir)}" placeholder="C:\\Users\\you\\Documents\\CLIENT">
           <div class="help">Claude Code runs in this folder, so the MCP servers configured there (e.g. <b>claude-context</b>) power the NEW / CONFIRMS / UPDATES callouts.</div></div>
         <div class="frow"><label>Style reference</label><input class="field" id="setStyle" value="${esc(ps.style_reference)}" placeholder="Built-in annotated-transcript style">
           <div class="help">An HTML document whose look to copy (style only, never its content).</div></div>
