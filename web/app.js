@@ -508,7 +508,7 @@ requestAnimationFrame(drawMeter);
 // GigaAM (Russian only) is left out of the Windows EN/ES build.
 const ENGINES = {
   whisper: { name: 'Whisper turbo', short: 'WHISPER' },
-  parakeet: { name: 'Parakeet v3 (EN+ES, fast)', short: 'PARAKEET', autoLang: true },
+  parakeet: { name: 'Parakeet v3 (EN+ES, fast)', short: 'PARAKEET' },  // EN/ES: wrong-language phrases are redone with Whisper
 };
 // Parakeet always detects the language itself, so only "Auto" applies to it.
 const engineBlocksLang = (engine, lang) => !!ENGINES[engine || 'whisper']?.autoLang && lang !== 'auto';

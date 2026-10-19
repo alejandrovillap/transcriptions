@@ -115,12 +115,28 @@ Se eligen en **Opciones → Motor** o con `--engine` en consola:
 
 | Motor | Idiomas | Notas |
 |---|---|---|
-| `parakeet` (por defecto en la interfaz) | Detecta el idioma él mismo (25 idiomas europeos, incluidos inglés y español) | Muy rápido en CPU, con puntuación. No admite *hotwords*: usa `--vocab-correct` para aplicar a la salida las correcciones de tus notas |
+| `parakeet` (por defecto en la interfaz) | Detecta el idioma él mismo (25 idiomas europeos, incluidos inglés y español). Con **ES** o **EN** fijo, ver abajo | Muy rápido en CPU, con puntuación. No admite *hotwords*: usa `--vocab-correct` para aplicar a la salida las correcciones de tus notas |
 | `whisper` | Inglés/español detectado en cada frase, o fijo con `--lang en/es` | Admite *hotwords* (los términos de tus notas ayudan al reconocimiento). Mucho más lento en CPU |
 
 ```bat
 record.bat miproyecto --engine parakeet --vocab-file projects\miproyecto\notes.md --vocab-correct
 ```
+
+**Idioma fijo con Parakeet.** Parakeet no acepta un idioma y, con audio ruidoso o con eco, a veces
+contesta en inglés aunque se hable español. Si eliges **ES** o **EN** (o `--lang es/en`), cada frase
+se revisa: si salió claramente en el otro idioma, se vuelve a transcribir con Whisper en el idioma
+elegido. Whisper se carga en segundo plano al empezar (la primera vez descarga ~1.6 GB) y es unas
+2–3 veces más lento que el tiempo real en CPU, así que solo se usa para esas frases. En **Auto** no se
+revisa nada.
+
+**Audio sin pausas.** Una frase se manda a transcribir tras una pausa de *Pausa entre frases*. Si el
+audio no se detiene (un podcast o un video con *Audio de la llamada*, o gente hablando encima), se
+corta igual: en la primera pausa corta después de 15 s, o en el momento con menos voz al llegar a
+25 s (`SOFT_CHUNK_SEC` / `MAX_CHUNK_SEC` en `main.py`). Así el texto sigue apareciendo en vivo.
+
+> Sin audífonos, el micrófono también capta las bocinas y eso se mezcla con el audio del sistema,
+> con un pequeño desfase (eco). Empeora mucho el reconocimiento: usa audífonos o desactiva
+> *Audio de la llamada* si la llamada suena por las bocinas.
 
 Para comparar motores sobre una grabación propia (velocidad, memoria y, si das un texto de
 referencia corregido a mano, la tasa de error WER/CER):
@@ -185,6 +201,11 @@ Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
 - **Pausar el micrófono** (botón *Pausa* / *Reanudar*) sin detener la grabación.
 - **Continuar una sesión anterior**: se elige la sesión y se pulsa *Grabar*; lo nuevo se añade a la
   misma transcripción y la diarización se recalcula sobre todo.
+- **Hablantes en modo *Detectar***: solo se agrupan los fragmentos de voz de al menos 1.5 s (los más
+  cortos dan una "huella" poco fiable y se asignan al hablante más parecido). Un "hablante" con
+  menos de 4 s de voz se une al más cercano, y los cambios de hablante de una o dos palabras entre
+  dos turnos de la misma persona se corrigen. Para rehacerlo sobre una sesión ya grabada:
+  `.venv\Scripts\python rediarize.py <proyecto> [--speakers N]` (escribe un `.diarized.txt`).
 - **Notas del proyecto** (pestaña *Notas*): contexto y correcciones "se oyó → debe ser" que usan la
   versión anotada, la minuta, el chat y el reconocimiento en vivo.
 - **Preguntar**: chat sobre la reunión mientras sigue la grabación.

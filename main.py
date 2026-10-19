@@ -42,6 +42,13 @@ SAMPLE_RATE = 16000
 VAD_THRESHOLD = 0.5
 SILENCE_DURATION_MS = 1500
 MIN_SPEECH_DURATION_MS = 250
+# Continuous audio (a podcast, a video, people talking over each other) may never pause
+# for SILENCE_DURATION_MS. Then a phrase is cut anyway: at the first short pause after
+# SOFT_CHUNK_SEC, or at the least-speech moment of the last CUT_SEARCH_SEC once it
+# reaches MAX_CHUNK_SEC. Keeps live text flowing and the ASR input short.
+SOFT_CHUNK_SEC = 15.0
+MAX_CHUNK_SEC = 25.0
+CUT_SEARCH_SEC = 4.0
 SCREENSHOT_HELPER = Path(__file__).parent / "screenshot_helper.py"
 SUPPORTED_LANGS = ("en", "es")
 OCR_LANGS = ["es", "en"]
@@ -211,6 +218,66 @@ def apply_corrections(text: str) -> str:
 LANG_CONFIDENT = 0.75       # en/es probability ratio needed to trust a phrase's own detection
 
 
+# ── Language guard for engines that choose the language themselves ─────────────
+# Parakeet has no language option and, on noisy or echoey audio, may answer in English
+# for Spanish speech. With a fixed --lang, each phrase's output language is checked with
+# function words, and phrases in the wrong language are redone with Whisper.
+_FUNCTION_WORDS = {
+    "en": set("the and of to is that it was for with you this are have not be they what "
+              "but on at we there his from or an by so would if when which".split()),
+    "es": set("el la los las de que y en un una es por con para no se lo como pero más "
+              "del al su sus le ya muy está son fue hay también porque cuando esto".split()),
+}
+LANG_GUARD_MIN_HITS = 4   # function words needed before trusting the guess
+
+
+def guess_lang(text):
+    """'en' / 'es' when the text clearly reads as one of them, else None."""
+    words = re.findall(r"[a-záéíóúñü]+", text.lower())
+    hits = {k: sum(w in v for w in words) for k, v in _FUNCTION_WORDS.items()}
+    best = max(hits, key=hits.get)
+    other = min(hits, key=hits.get)
+    if hits[best] >= LANG_GUARD_MIN_HITS and hits[best] >= 2 * max(hits[other], 1):
+        return best
+    return None
+
+
+class LangFallback:
+    """Whisper loaded in the background, only when a fixed language is used with an engine
+    that ignores it; get() waits for it the first time it is needed."""
+
+    def __init__(self):
+        self._engine = None
+        self._ready = threading.Event()
+        self._started = False
+
+    def start(self):
+        if self._started:
+            return
+        self._started = True
+
+        def load():
+            try:
+                print(f"[lang] Loading Whisper {MODEL_SIZE} for wrong-language phrases (background)")
+                self._engine = create_engine("whisper", device=DEVICE, model_size=MODEL_SIZE,
+                                             compute_type=COMPUTE_TYPE, beam_size=BEAM_SIZE)
+            except Exception as e:
+                print(f"[lang] Whisper fallback unavailable: {e}", file=sys.stderr)
+            finally:
+                self._ready.set()
+
+        threading.Thread(target=load, daemon=True).start()
+
+    def get(self):
+        if not self._started:
+            return None
+        self._ready.wait()
+        return self._engine
+
+
+lang_fallback = LangFallback()
+
+
 def transcription_worker(asr_engine, output_file, session_data, enable_diarization, lang_mode):
     """Daemon thread: transcribe speech segments and stream results to console."""
     # Language state: in auto mode, current_lang is the last confidently detected language
@@ -262,6 +329,21 @@ def transcription_worker(asr_engine, output_file, session_data, enable_diarizati
                     sys.stdout.write(f"\r\033[K[lang] {seg_lang}\n")
                     sys.stdout.flush()
                     events.emit("lang", lang=seg_lang)
+            elif not auto and asr_engine.languages is None and asr_engine.name != "whisper":
+                # Fixed language with an engine that picks it by itself (Parakeet): keep its
+                # output unless it came out in the other language, then redo with Whisper.
+                segments = list(run(None))
+                got = guess_lang(" ".join(seg.text for seg in segments))
+                if got and got != current_lang:
+                    fallback = lang_fallback.get()
+                    if fallback is not None:
+                        print(f"\r\033[K[lang] {asr_engine.name} answered in {got}; "
+                              f"redoing {duration:.1f}s with {fallback.label} ({current_lang})")
+                        events.emit("lang_fallback", got=got, want=current_lang,
+                                    duration=round(duration, 1))
+                        segments = fallback.transcribe(
+                            segment_audio, language=current_lang,
+                            word_timestamps=enable_diarization, hotwords=current_hotwords())
             else:
                 # Fixed language, or an engine that detects it by itself (Parakeet).
                 segments = run(None if auto else current_lang)
@@ -396,8 +478,13 @@ def vad_loop(vad_model):
     silence_chunks = int((SILENCE_DURATION_MS / 1000) * SAMPLE_RATE / vad_chunk_samples)
     min_speech_chunks = int((MIN_SPEECH_DURATION_MS / 1000) * SAMPLE_RATE / vad_chunk_samples)
 
+    soft_chunks = int(SOFT_CHUNK_SEC * SAMPLE_RATE / vad_chunk_samples)
+    max_chunks = int(MAX_CHUNK_SEC * SAMPLE_RATE / vad_chunk_samples)
+    search_chunks = int(CUT_SEARCH_SEC * SAMPLE_RATE / vad_chunk_samples)
+
     buffer = np.array([], dtype=np.float32)
     speech_buffer = np.array([], dtype=np.float32)
+    speech_probs: list[float] = []   # one VAD probability per window in speech_buffer
     is_speaking = False
     silent_count = 0
     speech_count = 0
@@ -435,6 +522,7 @@ def vad_loop(vad_model):
                 speech_count += 1
                 silent_count = 0
                 speech_buffer = np.concatenate([speech_buffer, window])
+                speech_probs.append(speech_prob)
                 # Show recording status with duration
                 duration = len(speech_buffer) / SAMPLE_RATE
                 sys.stdout.write(f"\r\033[K● speech [{duration:.1f}s]")
@@ -444,6 +532,7 @@ def vad_loop(vad_model):
                 if is_speaking:
                     silent_count += 1
                     speech_buffer = np.concatenate([speech_buffer, window])
+                    speech_probs.append(speech_prob)
 
                     # Re-read each window so the pause can be changed while recording
                     silence_chunks = int((SILENCE_DURATION_MS / 1000) * SAMPLE_RATE / vad_chunk_samples)
@@ -458,9 +547,34 @@ def vad_loop(vad_model):
                         events.emit("speech_end", queued=queued, t=round(t_start, 2),
                                     duration=round(len(speech_buffer) / SAMPLE_RATE, 1))
                         speech_buffer = np.array([], dtype=np.float32)
+                        speech_probs = []
                         is_speaking = False
                         silent_count = 0
                         speech_count = 0
+                        continue
+
+            # Long phrase without a real pause: cut it (see SOFT_CHUNK_SEC / MAX_CHUNK_SEC).
+            if is_speaking:
+                n_win = len(speech_probs)
+                cut = None
+                if n_win >= max_chunks:
+                    region = speech_probs[n_win - search_chunks:]
+                    cut = n_win - search_chunks + int(np.argmin(region)) + 1
+                elif n_win >= soft_chunks and not is_speech:
+                    cut = n_win
+                if cut:
+                    cut_samples = cut * vad_chunk_samples
+                    t_start = speech_start_sample / SAMPLE_RATE
+                    transcribe_queue.put((t_start, speech_buffer[:cut_samples].copy()))
+                    events.emit("speech_end", queued=True, t=round(t_start, 2),
+                                duration=round(cut_samples / SAMPLE_RATE, 1), forced=True)
+                    speech_buffer = speech_buffer[cut_samples:]
+                    speech_probs = speech_probs[cut:]
+                    speech_start_sample += cut_samples
+                    speech_count = sum(p >= VAD_THRESHOLD for p in speech_probs)
+                    silent_count = 0
+                    if not speech_probs:
+                        is_speaking = False
 
     # Flush remaining speech buffer on shutdown
     if len(speech_buffer) > 0 and speech_count >= min_speech_chunks:
@@ -794,8 +908,8 @@ def main():
               file=sys.stderr)
         sys.exit(1)
     if args.engine == "parakeet" and args.lang.lower() != "auto":
-        print(f"[lang] Parakeet detects the language by itself; --lang {args.lang} is ignored")
-        args.lang = "auto"
+        print(f"[lang] Parakeet detects the language by itself; with --lang {args.lang} phrases "
+              f"that come out in another language are redone with Whisper")
 
     # Parse diarization settings
     enable_diarization = args.speakers is not None
@@ -885,6 +999,8 @@ def main():
 
     # Start transcription worker thread
     lang_mode = args.lang.lower()
+    if lang_mode != "auto" and args.engine != "whisper":
+        lang_fallback.start()
     worker = threading.Thread(
         target=transcription_worker,
         args=(asr_engine, output_file, session_data, enable_diarization, lang_mode),
