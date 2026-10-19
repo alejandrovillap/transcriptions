@@ -34,6 +34,9 @@ DEFAULT_SETTINGS = {
     "minutes": 180,
     "pause": 1.5,
     "save_audio": False,
+    "system_audio": True,             # Windows build: also record what you hear (the others in a call)
+    "mic_device": "",                 # Windows build: empty = Windows default microphone
+    "output_device": "",              # Windows build: empty = all outputs
     "auto_frames": False,             # automatic screen frames (autoframes.py) from the start
     "frames_l1": True,                # auto frames Level 1 (frames_l1.py, CLIP); off = Level 0 only
     "recorder_python": "",            # empty = same interpreter as server.py

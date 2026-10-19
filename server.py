@@ -33,6 +33,7 @@ from fastapi.staticfiles import StaticFiles
 
 import beautify
 import minutes_api   # Windows build: formal minutes (minutes.py)
+import audio_api     # Windows build: audio device list (audio_sources.py)
 import claude_cli
 import select_frames as SF
 import sessions as S
@@ -196,6 +197,12 @@ class Recorder:
             cmd.append("--save-audio")
         if opts.get("auto_frames"):
             cmd += ["--auto-frames", "1"]
+        if IS_WINDOWS:   # Windows build: mic + what you hear (audio_sources.py)
+            if opts.get("system_audio", settings.get("system_audio", True)):
+                cmd.append("--system-audio")
+            for key, flag in (("mic_device", "--mic-device"), ("output_device", "--output-device")):
+                if settings.get(key):
+                    cmd += [flag, settings[key]]
         if not settings.get("frames_l1", True):
             cmd.append("--no-frames-l1")
         continue_sid = (opts.get("continue_sid") or "").strip()
@@ -217,7 +224,7 @@ class Recorder:
             stderr=asyncio.subprocess.STDOUT, **CHILD_FLAGS,
             env={**os.environ, "PYTHONUNBUFFERED": "1", "PYTHONIOENCODING": "utf-8"}, limit=STREAM_LIMIT)
         S.save_settings({"last_project": project, **{k: opts[k] for k in
-                         ("engine", "lang", "speakers", "minutes", "pause", "save_audio", "auto_frames")
+                         ("engine", "lang", "speakers", "minutes", "pause", "save_audio", "auto_frames", "system_audio")
                          if k in opts}})
         self.set_state("loading", "Starting recognizer")
         loop = asyncio.get_running_loop()
@@ -768,6 +775,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(lifespan=lifespan)
 minutes_api.hub = hub
 app.include_router(minutes_api.router)
+app.include_router(audio_api.router)
 S.PROJECTS_DIR.mkdir(exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(S.PROJECTS_DIR)), name="files")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")

@@ -106,6 +106,24 @@ que muestran algo nuevo. Se activa con el interruptor **Auto frames** antes de g
 
 Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
 
+## Audio de la llamada con audífonos (exclusivo de esta versión)
+
+Con audífonos, las voces de los demás van directo a tus oídos y el micrófono no las oye. Con el
+interruptor **Call audio** (activado por defecto) se graba, mezclado con tu micrófono, también **lo
+que suena en el equipo**, es decir, lo que dicen los demás. Así se transcribe a todos.
+
+- Por defecto se graban **todas las salidas** a la vez (audífonos, bocinas, monitor), así la
+  llamada se capta suene por donde suene, aunque Teams use un dispositivo distinto al
+  predeterminado.
+- En ⚙ Settings → *Recognizer* puedes fijar un **micrófono** concreto (por defecto, el de Windows)
+  y una **salida** concreta.
+- Ojo: con *Call audio* también se graba cualquier otro sonido del equipo (un video o
+  notificaciones) mientras grabas.
+- En consola: `record.bat proyecto --system-audio [--mic-device "nombre"] [--output-device "nombre"]`.
+
+Usa PyAudioWPatch (WASAPI loopback). La librería `soundcard` se descartó porque bloqueaba el
+proceso con algunas salidas.
+
 ## Grabación automática de llamadas (exclusivo de esta versión)
 
 `callwatch.bat` deja un **icono junto al reloj** que vigila el micrófono. Cuando Teams, Zoom,

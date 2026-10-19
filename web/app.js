@@ -328,6 +328,7 @@ function renderControl() {
         <div class="opt"><span class="opt-label">Auto-stop</span><input class="field num" id="minInp" type="number" min="1" value="${s.minutes || 180}"> min</div>
         ${pauseControl(s.pause || 1.5)}
         <label class="switch opt"><input type="checkbox" id="audioChk" ${s.save_audio ? 'checked' : ''}><span class="knob"></span>Save audio</label>
+        <label class="switch opt" title="Also record what you hear: the other participants of a call when you use a headset (Windows)"><input type="checkbox" id="sysChk" ${s.system_audio !== false ? 'checked' : ''}><span class="knob"></span>Call audio</label>
         <label class="switch opt" title="Capture the screen every second and keep the frames that show something new"><input type="checkbox" id="autoChk" ${s.auto_frames ? 'checked' : ''}><span class="knob"></span>Auto frames</label>
       </div>`;
     $('#recBtn').onclick = startRecording;
@@ -341,6 +342,7 @@ function renderControl() {
     $('#spkSel').onchange = e => { st.settings.speakers = e.target.value; };
     $('#minInp').onchange = e => { st.settings.minutes = +e.target.value || 180; };
     $('#audioChk').onchange = e => { st.settings.save_audio = e.target.checked; };
+    $('#sysChk').onchange = e => { st.settings.system_audio = e.target.checked; };
     $('#autoChk').onchange = e => { st.settings.auto_frames = e.target.checked; };
     bindPause();
     return;
@@ -528,7 +530,7 @@ async function startRecording() {
     }
     await api('POST', '/api/record/start', {
       project: st.project, engine, lang: s.lang || 'auto', speakers: s.speakers || 'auto',
-      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio, auto_frames: !!s.auto_frames,
+      minutes: s.minutes || 180, pause: s.pause || 1.5, save_audio: !!s.save_audio, auto_frames: !!s.auto_frames, system_audio: s.system_audio !== false,
       continue_sid: st.sid && st.session && !st.session.live ? st.sid : '',
     });
   } catch (e) { st.starting = false; renderControl(); fail(e); }
@@ -1488,6 +1490,9 @@ async function openSettings() {
       <fieldset class="fset"><legend>Recognizer</legend>
         <div class="frow"><label>Python</label><div style="display:flex;gap:8px"><input class="field" id="setPy" value="${esc(s.recorder_python)}" placeholder="Same as the server"><button class="ghost-btn small" id="checkPy" style="height:30px">Check</button></div>
           <div class="help">The interpreter that has faster-whisper, torch and easyocr installed. <span id="checkRes" class="check-res"></span></div></div>
+        <div class="frow"><label>Microphone</label><select class="field" id="setMic"><option value="">Windows default microphone</option></select></div>
+        <div class="frow"><label>Call audio from</label><select class="field" id="setOut"><option value="">All outputs (headset, speakers, monitor)</option><option value="default">Windows default output</option></select>
+          <div class="help">With <b>Call audio</b> on, what plays here is recorded together with the microphone, so the other participants are transcribed even with a headset. <span id="audioDevs" class="check-res"></span></div></div>
         <div class="frow"><label>Auto frames</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setL1" ${s.frames_l1 !== false ? 'checked' : ''}><span class="knob"></span>Smart filter (CLIP): drop webcam faces, merge look-alike frames</label>
           <div class="help">Applies to the next recording. Off = pixel comparison only.</div></div>
       </fieldset>
@@ -1495,6 +1500,18 @@ async function openSettings() {
     <div class="modal-foot"><button class="ghost-btn" data-close>Cancel</button><button class="primary-btn" id="saveSettings">Save</button></div>`,
   root => {
     $('[data-close]', root).onclick = closeModal;
+    api('GET', '/api/audio/devices').then(d => {   // Windows build: audio_api.py
+      const add = (sel, names, cur) => {
+        for (const n of names) sel.insertAdjacentHTML('beforeend', `<option value="${esc(n)}">${esc(n)}</option>`);
+        if (cur && ![...sel.options].some(o => o.value === cur)) sel.insertAdjacentHTML('beforeend', `<option value="${esc(cur)}">${esc(cur)} (not connected)</option>`);
+        sel.value = cur || '';
+      };
+      add($('#setMic'), d.mics || [], s.mic_device || '');
+      add($('#setOut'), d.outputs || [], s.output_device || '');
+      const el = $('#audioDevs');
+      if (d.error) { el.className = 'check-res bad'; el.textContent = `✗ ${d.error}`; }
+      else if (d.default_mic) el.textContent = `Windows defaults now: ${d.default_mic} · ${d.default_output}`;
+    }).catch(() => {});
     $('#checkPy', root).onclick = async () => {
       await api('POST', '/api/settings', { recorder_python: $('#setPy').value.trim() });
       const r = await api('GET', `/api/check-recorder?engine=${encodeURIComponent(st.settings.engine || 'whisper')}`);
@@ -1507,6 +1524,7 @@ async function openSettings() {
           beautify_engine: $('#setEngine').value, beautify_model: $('#setBModel').value, chat_model: $('#setCModel').value,
           auto_final_beautify: $('#setAuto').checked, recorder_python: $('#setPy').value.trim(),
           frames_l1: $('#setL1').checked,
+          mic_device: $('#setMic').value, output_device: $('#setOut').value,
         });
         if (st.project) await api('POST', `/api/projects/${encodeURIComponent(st.project)}/settings`, {
           context_dir: $('#setCtx').value.trim(), style_reference: $('#setStyle').value.trim(),

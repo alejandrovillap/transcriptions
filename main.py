@@ -768,6 +768,15 @@ def main():
                              "With --control-stdin it can also be toggled with AUTO ON/OFF")
     parser.add_argument("--no-frames-l1", action="store_true",
                         help="Auto frames without Level 1 (CLIP: drops faces, merges look-alike frames)")
+    # Windows build (audio_sources.py)
+    parser.add_argument("--system-audio", action="store_true",
+                        help="Also record what you hear (the other participants of a call when you "
+                             "use a headset), mixed with the microphone")
+    parser.add_argument("--mic-device", default="",
+                        help="Microphone name (or part of it); empty = the Windows default microphone")
+    parser.add_argument("--output-device", default="",
+                        help="Output whose audio is recorded with --system-audio: empty = all outputs, "
+                             "'default' or a name")
     parser.add_argument("--vocab-correct", action="store_true",
                         help='Replace "heard" phrases from --vocab-file with the "meant" ones in the output '
                              "(useful with gigaam/parakeet, which have no hotwords)")
@@ -899,13 +908,28 @@ def main():
     ocr_thread.start()
 
     # Start audio stream
-    stream = sd.InputStream(
-        samplerate=SAMPLE_RATE,
-        channels=1,
-        dtype="float32",
-        blocksize=1600,  # 100ms blocks
-        callback=audio_callback,
-    )
+    stream = None
+    if sys.platform == "win32" and (args.system_audio or args.mic_device):
+        # Windows build: microphone + what you hear (the others in a call with a headset).
+        try:
+            from audio_sources import MixedInput
+            stream = MixedInput(audio_callback, SAMPLE_RATE, 1600, mic=args.mic_device,
+                                system=args.system_audio, output=args.output_device)
+            print(f"Audio: {stream.describe()}")
+            events.emit("audio_sources", description=stream.describe())
+        except Exception as e:
+            print(f"[audio] system audio unavailable ({e}); recording the default microphone only",
+                  file=sys.stderr)
+            events.emit("error", where="audio", message=f"System audio unavailable: {e}")
+            stream = None
+    if stream is None:
+        stream = sd.InputStream(
+            samplerate=SAMPLE_RATE,
+            channels=1,
+            dtype="float32",
+            blocksize=1600,  # 100ms blocks
+            callback=audio_callback,
+        )
     stream.start()
 
     # Start native screenshot helper

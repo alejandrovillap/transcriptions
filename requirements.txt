@@ -13,6 +13,8 @@ opencv-python-headless>=4.8
 transformers>=4.40
 # call watcher (call_watcher.py): icon next to the clock
 pystray>=0.19
+# call audio with a headset (audio_sources.py): WASAPI loopback
+pyaudiowpatch>=0.2.12
 # diarization (optional, needed for --speakers flag)
 speechbrain>=1.0.0
 scikit-learn>=1.0.0

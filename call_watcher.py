@@ -374,7 +374,8 @@ class Watcher:
         project = self.cfg["project"].strip() or settings.get("last_project") or "llamadas"
         self.server.post("/api/projects", {"name": project})
         body = {"project": project, **{k: settings.get(k) for k in
-                ("lang", "speakers", "minutes", "pause", "save_audio", "engine", "auto_frames")}}
+                ("lang", "speakers", "minutes", "pause", "save_audio", "engine", "auto_frames",
+                 "system_audio")}}
         self.server.post("/api/record/start", body)
         sid = ""
         for _ in range(120):            # the session id arrives once main.py is up
