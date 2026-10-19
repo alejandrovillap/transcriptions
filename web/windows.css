@@ -45,3 +45,47 @@
 .switch { position: relative; }
 .switch input { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; margin: 0; pointer-events: none; }
 .switch input:focus-visible + .knob { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* ── 4. One-click recording: collapsible "Options" (windows.js) ──────────── */
+.win-more { flex: 1 1 100%; min-width: 0; }
+.win-more > summary {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; cursor: pointer; list-style: none;
+  padding: 5px 10px; border-radius: 8px; border: 1px solid var(--line); color: var(--muted); font-size: 12.5px;
+}
+.win-more > summary::-webkit-details-marker { display: none; }
+.win-more > summary::before { content: "▸"; font-size: 10px; transition: transform .15s; }
+.win-more[open] > summary::before { transform: rotate(90deg); }
+.win-more > summary:hover { border-color: var(--line-strong); color: var(--ink); }
+.win-more-t { font-weight: 650; color: var(--ink-2); }
+.win-more-s { color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.win-more[open] .win-more-s { display: none; }
+.win-more-body { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding-top: 12px; }
+
+/* ── 5. Settings dialog in tabs (windows.js) ──────────────────────────────── */
+.win-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 0 -22px 16px; padding: 0 22px; position: sticky; top: -8px; background: var(--raised); z-index: 1; }
+.win-tab { padding: 9px 12px; color: var(--muted); font-weight: 600; position: relative; }
+.win-tab:hover { color: var(--ink); }
+.win-tab.on { color: var(--ink); }
+.win-tab.on::after { content: ""; position: absolute; left: 8px; right: 8px; bottom: -1px; height: 2px; border-radius: 2px; background: var(--accent); }
+.win-pane-label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint); font-weight: 650; margin-bottom: 10px; }
+.win-pane[hidden] { display: none; }
+
+/* ES / EN switch */
+.win-lang { width: auto; padding: 0 8px; font-size: 11.5px; font-weight: 700; letter-spacing: .04em; }
+
+/* ── 6. Compact mode for narrow / short windows (e.g. half screen next to Teams) ── */
+@media (max-width: 820px) {
+  .control { padding: 10px 12px; gap: 10px; }
+  .rec-hint { white-space: normal; }
+  .main-panel { height: calc(100vh - 150px); min-height: 320px; }
+  .side-panel { height: 70vh; }
+}
+@media (max-height: 760px) {
+  .control { padding-top: 8px; padding-bottom: 8px; }
+  .topbar { padding-top: 6px; padding-bottom: 6px; }
+}
+
+/* ── 7. Line / card actions: discoverable without hover, larger targets ───── */
+.eye-btn, .sim-btn, .shot-del { width: 30px; height: 30px; opacity: .28; }
+.eye-btn:hover, .sim-btn:hover, .shot-del:hover { opacity: 1; }
+@media (hover: none) { .eye-btn, .sim-btn, .shot-del { opacity: .8; } }
