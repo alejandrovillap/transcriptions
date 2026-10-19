@@ -1,0 +1,311 @@
+/* Fluent 2 / Microsoft 365 look, loaded after style.css and windows.css.
+   Re-themes tokens and components only: markup and JS are untouched, so style.css can still
+   be merged from upstream. Layout follows the new Office apps: grey canvas, title bar on the
+   canvas, the command strip as a floating "ribbon" card and the panels as cards below it. */
+
+/* ── Tokens (Fluent 2 web light / dark) ───────────────────────────────────── */
+:root {
+  --bg: #f5f5f5; --panel: #ffffff; --panel-2: #fafafa; --raised: #ffffff;
+  --hover: #f5f5f5; --pressed: #e0e0e0;
+  --line: #e0e0e0; --line-strong: #d1d1d1; --stroke-acc: #616161;
+  --ink: #242424; --ink-2: #424242; --muted: #616161; --faint: #6e6e6e;
+  --accent: #0f6cbd; --accent-ink: #ffffff; --accent-soft: #ebf3fc; --accent-hover: #115ea3;
+  --brand-bg: #0f6cbd;
+  --rec: #c50f1f; --rec-btn: #c50f1f; --rec-soft: #fdf3f4;
+  --ok: #107c10; --ok-soft: #f1faf1; --warn: #bc4b09; --warn-soft: #fff9f5;
+  --ai-1: #4f6bed; --ai-2: #8a5cf6;
+  --shadow: 0 0 2px rgba(0,0,0,.12), 0 2px 4px rgba(0,0,0,.14);
+  --shadow-pop: 0 0 2px rgba(0,0,0,.12), 0 8px 16px rgba(0,0,0,.14);
+  --shadow-dlg: 0 0 8px rgba(0,0,0,.12), 0 32px 64px rgba(0,0,0,.14);
+  --scrim: rgba(0,0,0,.4);
+  --r-s: 4px; --r-m: 6px; --r-l: 8px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1f1f1f; --panel: #292929; --panel-2: #242424; --raised: #2e2e2e;
+    --hover: #3d3d3d; --pressed: #1f1f1f;
+    --line: #3d3d3d; --line-strong: #525252; --stroke-acc: #adadad;
+    --ink: #ffffff; --ink-2: #d6d6d6; --muted: #adadad; --faint: #a3a3a3;
+    --accent: #479ef5; --accent-ink: #ffffff; --accent-soft: #082338; --accent-hover: #0f6cbd;
+    --brand-bg: #115ea3;
+    --rec: #ff6b77; --rec-btn: #c50f1f; --rec-soft: #3b1418;
+    --ok: #54b054; --ok-soft: #052505; --warn: #fa9e5f; --warn-soft: #411200;
+    --ai-1: #6c84ff; --ai-2: #a07aff;
+    --shadow: 0 0 2px rgba(0,0,0,.24), 0 2px 4px rgba(0,0,0,.28);
+    --shadow-pop: 0 0 2px rgba(0,0,0,.24), 0 8px 16px rgba(0,0,0,.28);
+    --shadow-dlg: 0 0 8px rgba(0,0,0,.24), 0 32px 64px rgba(0,0,0,.28);
+    --scrim: rgba(0,0,0,.5);
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1f1f1f; --panel: #292929; --panel-2: #242424; --raised: #2e2e2e;
+  --hover: #3d3d3d; --pressed: #1f1f1f;
+  --line: #3d3d3d; --line-strong: #525252; --stroke-acc: #adadad;
+  --ink: #ffffff; --ink-2: #d6d6d6; --muted: #adadad; --faint: #a3a3a3;
+  --accent: #479ef5; --accent-ink: #ffffff; --accent-soft: #082338; --accent-hover: #0f6cbd;
+  --brand-bg: #115ea3;
+  --rec: #ff6b77; --rec-btn: #c50f1f; --rec-soft: #3b1418;
+  --ok: #54b054; --ok-soft: #052505; --warn: #fa9e5f; --warn-soft: #411200;
+  --ai-1: #6c84ff; --ai-2: #a07aff;
+  --shadow: 0 0 2px rgba(0,0,0,.24), 0 2px 4px rgba(0,0,0,.28);
+  --shadow-pop: 0 0 2px rgba(0,0,0,.24), 0 8px 16px rgba(0,0,0,.28);
+  --shadow-dlg: 0 0 8px rgba(0,0,0,.24), 0 32px 64px rgba(0,0,0,.28);
+  --scrim: rgba(0,0,0,.5);
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+body { font-size: 14px; line-height: 20px; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-thumb { border-width: 2px; background-color: var(--line-strong); }
+*::-webkit-scrollbar-thumb:hover { background-color: var(--stroke-acc); }
+:where(button, a, [role="button"], [tabindex], summary, .tab, .seg button):focus-visible {
+  outline: 2px solid var(--ink); outline-offset: 1px; border-radius: var(--r-s);
+}
+
+/* ── Title bar (sits on the canvas, like Word / Teams) ────────────────────── */
+.topbar { background: var(--bg); border-bottom: 0; padding: 8px 16px 4px; gap: 14px; min-height: 48px; }
+.logo { width: 24px; height: 24px; }
+.logo-bg { fill: var(--brand-bg); }
+.logo-bars rect { fill: #fff; }
+.logo rect.logo-bg { rx: 5px; }
+.brand-name { font-weight: 600; font-size: 15px; letter-spacing: 0; }
+.brand-sub { color: var(--muted); font-weight: 400; font-size: 15px; margin-left: -5px; }
+.crumb { padding: 5px 10px; border-radius: var(--r-s); align-items: center; }
+.crumb:hover, .crumb.open { background: var(--hover); }
+.crumb:active { background: var(--pressed); }
+.crumb-label, .capture-kind, .opt-label, .menu .group, .fset legend, .win-pane-label,
+.suggest .hd, .fix-pop label {
+  text-transform: none; letter-spacing: 0; font-size: 12px; font-weight: 400; color: var(--muted);
+}
+.crumb-value { font-weight: 600; }
+.crumb .chev { stroke: var(--muted); }
+.crumb-sep { color: var(--line-strong); }
+.capture-btn {
+  height: 32px; border-radius: var(--r-s); background: var(--panel); border: 1px solid var(--line-strong);
+}
+.capture-btn:hover { background: var(--hover); border-color: var(--line-strong); }
+.capture-btn .ico { color: var(--accent); }
+.capture-label { font-weight: 600; }
+.icon-btn { border-radius: var(--r-s); color: var(--ink-2); }
+.icon-btn:hover { background: var(--hover); color: var(--accent); }
+.icon-btn:active { background: var(--pressed); }
+
+/* ── Command strip as a simplified ribbon ─────────────────────────────────── */
+.control {
+  margin: 4px 12px 0; padding: 8px 12px; min-height: 56px; gap: 16px;
+  background: var(--panel); border: 0; border-radius: var(--r-l); box-shadow: var(--shadow);
+}
+.opt-group { gap: 12px; padding-left: 16px; border-left: 1px solid var(--line); align-self: stretch; align-content: center; }
+.opt { gap: 8px; color: var(--ink-2); font-size: 14px; }
+.rec-btn, .stop-btn {
+  height: 32px; border-radius: var(--r-s); padding: 0 14px 0 12px; font-weight: 600; letter-spacing: 0; gap: 8px;
+}
+.rec-btn { background: var(--rec-btn); box-shadow: none; }
+.rec-btn:hover { filter: none; background: #b10e1c; }
+.rec-btn:active { transform: none; background: #960b18; }
+.rec-btn .dot { width: 10px; height: 10px; }
+.rec-btn:disabled { opacity: 1; background: var(--line); color: var(--faint); }
+.rec-btn:disabled .dot { background: var(--faint); }
+.stop-btn { background: var(--panel); color: var(--ink); border: 1px solid var(--line-strong); }
+.stop-btn:hover { filter: none; background: var(--hover); }
+.stop-btn .sq { width: 10px; height: 10px; border-radius: 2px; }
+.mute-btn { height: 32px; border-radius: var(--r-s); }
+.rec-hint { font-size: 12px; color: var(--muted); }
+.rec-pill { height: 24px; border-radius: var(--r-s); letter-spacing: .04em; font-weight: 600; }
+.timer { font-size: 24px; font-weight: 600; letter-spacing: 0; }
+.chip { border-radius: var(--r-s); background: var(--panel-2); border-color: var(--line); font-weight: 600; color: var(--ink-2); letter-spacing: 0; }
+
+/* Segmented language picker: Fluent toggle buttons */
+.seg { background: transparent; border: 1px solid var(--line-strong); border-radius: var(--r-s); padding: 0; overflow: hidden; }
+.seg button { border-radius: 0; padding: 5px 12px; font-size: 14px; color: var(--ink-2); font-weight: 400; }
+.seg button + button { border-left: 1px solid var(--line-strong); }
+.seg button:hover:not(:disabled) { background: var(--hover); }
+.seg button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; box-shadow: none; }
+
+/* Fluent switch: outlined track off, filled brand on */
+.switch .knob { width: 40px; height: 20px; border-radius: 10px; background: transparent; border: 1px solid var(--stroke-acc); }
+.switch .knob::after { top: 3px; left: 3px; width: 12px; height: 12px; background: var(--stroke-acc); box-shadow: none; }
+.switch input:checked + .knob { background: var(--brand-bg); border-color: transparent; }
+.switch input:checked + .knob::after { transform: translateX(20px); background: #fff; }
+.switch:hover input:not(:checked) + .knob { border-color: var(--ink-2); }
+
+/* Fields: thin border, darker bottom stroke, brand underline on focus */
+.field {
+  height: 32px; border-radius: var(--r-s); background: var(--panel);
+  border: 1px solid var(--line-strong); border-bottom-color: var(--stroke-acc);
+}
+.field:hover { border-color: var(--stroke-acc); }
+.field:focus { border-color: var(--line-strong); border-bottom-color: var(--accent); box-shadow: inset 0 -1px 0 var(--accent); }
+
+/* Options disclosure */
+.win-more > summary { border-radius: var(--r-s); border-color: transparent; padding: 5px 8px; color: var(--ink-2); font-size: 13px; }
+.win-more > summary:hover { background: var(--hover); border-color: transparent; }
+.win-more-t { font-weight: 600; color: var(--ink); }
+.win-more-s { color: var(--muted); }
+.win-more-body { padding-top: 8px; }
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.ghost-btn {
+  height: 32px; padding: 0 12px; border-radius: var(--r-s); font-weight: 600;
+  background: var(--panel); border: 1px solid var(--line-strong);
+}
+.ghost-btn:hover { background: var(--hover); border-color: var(--line-strong); }
+.ghost-btn:active { background: var(--pressed); }
+.ghost-btn.small { height: 24px; padding: 0 8px; font-size: 12px; border-radius: var(--r-s); }
+.primary-btn, .send-btn { background: var(--brand-bg); color: #fff; border-radius: var(--r-s); }
+.primary-btn { height: 32px; padding: 0 14px; font-weight: 600; }
+.primary-btn:hover, .send-btn:hover:not(:disabled) { filter: none; background: var(--accent-hover); }
+.danger-btn { border-radius: var(--r-s); background: var(--rec-btn); }
+.link-btn { font-size: 12px; font-weight: 400; }
+.cancel-x { border-radius: var(--r-s); border-color: var(--line-strong); }
+
+/* AI (Beautify) button: Copilot-like gradient, flat */
+.split { border-radius: var(--r-s); box-shadow: none; }
+.beautify-btn { height: 32px; font-weight: 600; letter-spacing: 0; }
+.beautify-btn:hover { filter: brightness(1.06); }
+
+/* ── Workspace cards ──────────────────────────────────────────────────────── */
+.workspace { gap: 8px; padding: 8px 12px 6px; }
+.panel { border: 0; border-radius: var(--r-l); box-shadow: var(--shadow); }
+.panel-head { min-height: 44px; padding: 0 8px 0 8px; gap: 8px; }
+
+/* Fluent TabList: 3px rounded brand indicator, grey indicator on hover */
+.tab { padding: 0 10px; color: var(--ink-2); font-weight: 400; }
+.tab:hover { color: var(--ink); }
+.tab.active { color: var(--ink); font-weight: 600; }
+.tab::after, .win-tab::after {
+  content: ""; position: absolute; left: 10px; right: 10px; bottom: -1px; height: 3px; border-radius: 2px;
+  background: transparent; transition: background .1s;
+}
+.tab:hover::after, .win-tab:hover::after { background: var(--line-strong); }
+.tab.active::after, .win-tab.on::after { left: 10px; right: 10px; height: 3px; background: var(--accent); }
+.tab-count { color: var(--muted); font-weight: 400; }
+.tab-badge, .mini-badge { border-radius: var(--r-s); letter-spacing: 0; font-weight: 600; }
+.win-tab { color: var(--ink-2); font-weight: 400; }
+.win-tab.on { font-weight: 600; }
+.win-tabs { gap: 0; }
+
+/* Transcript */
+.transcript { padding: 12px 20px 40px 8px; }
+.row { border-radius: var(--r-s); }
+.row:hover { background: var(--hover); }
+.row p { color: var(--ink); font-size: 14px; line-height: 22px; }
+.row .t { color: var(--muted); }
+.spk { font-size: 12px; font-weight: 600; }
+.shot-inline { border-radius: var(--r-m); border-style: solid; border-color: var(--line); background: var(--panel); }
+.shot-inline img { border-radius: var(--r-s); }
+.sel-quote { border-left-width: 3px; border-radius: 0 var(--r-s) var(--r-s) 0; }
+.chunk { border-radius: var(--r-m); }
+.jump-live { border-radius: var(--r-s); background: var(--brand-bg); color: #fff; height: 28px; font-weight: 600; }
+
+/* Empty states */
+.empty { color: var(--muted); }
+.empty h3 { font-size: 16px; font-weight: 600; letter-spacing: 0; }
+.empty .art { width: 56px; height: 56px; border-radius: var(--r-l); background: var(--accent-soft); border: 0; color: var(--accent); }
+.empty .art .ico { width: 26px; height: 26px; stroke-width: 1.4; }
+
+/* Doc toolbars / job card */
+.doc-toolbar { padding: 8px 12px; gap: 8px; }
+.job-card { margin: 12px 12px 0; border-radius: var(--r-l); border-color: var(--line); background: var(--panel); box-shadow: var(--shadow); }
+.job-card .jc-title { font-weight: 600; }
+.job-card .bar, .pl-bar { height: 2px; }
+
+/* Screenshot / frame cards */
+.shots, .frames { padding: 10px; gap: 8px; }
+.shot-card, .frame-card { border-radius: var(--r-l); background: var(--panel); border: 1px solid var(--line); }
+.shot-card:hover, .frame-card:hover { border-color: var(--line-strong); box-shadow: var(--shadow); }
+.frame-card.picked { border-color: var(--accent); background: var(--accent-soft); }
+.thumb { border-radius: var(--r-s); }
+.pipeline li { border-radius: var(--r-s); }
+.ftag { border-radius: var(--r-s); }
+.pick-star { border-radius: var(--r-s); background: var(--brand-bg); color: #fff; }
+.eye-btn, .sim-btn, .shot-del { border-radius: var(--r-s); background: var(--panel); border-color: var(--line-strong); }
+.frames-bar { padding: 8px 12px; }
+
+/* Chat (Teams-like bubbles) */
+.chat-log { padding: 12px; gap: 12px; }
+.msg.user { background: var(--accent-soft); color: var(--ink); border-radius: var(--r-m); padding: 8px 12px; font-size: 14px; }
+.msg.assistant { font-size: 14px; color: var(--ink); line-height: 22px; }
+.ts-link { border-radius: var(--r-s); }
+.suggest button { border-radius: var(--r-m); background: var(--panel); border-color: var(--line-strong); color: var(--ink); font-size: 14px; }
+.suggest button:hover { background: var(--hover); border-color: var(--line-strong); }
+.composer {
+  margin: 0 10px; border-radius: var(--r-m); background: var(--panel);
+  border: 1px solid var(--line-strong); border-bottom-color: var(--stroke-acc);
+}
+.composer:focus-within { border-color: var(--line-strong); border-bottom-color: var(--accent); box-shadow: inset 0 -1px 0 var(--accent); }
+.send-btn { width: 32px; height: 32px; }
+.composer-hint { color: var(--muted); font-size: 12px; }
+
+/* Notes */
+.notes-help { color: var(--muted); font-size: 13px; }
+.notes-area {
+  margin: 0 10px; border-radius: var(--r-m); background: var(--panel);
+  border: 1px solid var(--line-strong); border-bottom-color: var(--stroke-acc);
+}
+.notes-area:focus { border-color: var(--line-strong); border-bottom-color: var(--accent); box-shadow: inset 0 -1px 0 var(--accent); }
+
+/* ── Status bar (Office style) ───────────────────────────────────────────── */
+.statusbar { padding: 2px 16px 6px; color: var(--muted); font-size: 12px; min-height: 26px; }
+.console-toggle { color: var(--muted); font-family: inherit; font-size: 12px; }
+.console-toggle:hover { color: var(--accent); }
+kbd { border-radius: 3px; border-bottom-width: 1px; color: var(--ink-2); background: var(--panel); font-size: 11px; }
+.console { border-radius: var(--r-l); }
+
+/* ── Menus, popovers, dialogs, toasts ─────────────────────────────────────── */
+.menu, .popover { border-radius: var(--r-l); border: 1px solid var(--line); box-shadow: var(--shadow-pop); padding: 4px; }
+.popover { padding: 16px; }
+.fix-pop { padding: 14px; }
+.menu .mi { border-radius: var(--r-s); padding: 6px 10px; }
+.menu .mi:hover, .menu .mi.on { background: var(--hover); }
+.menu .mi .mi-title { font-weight: 400; }
+.menu .mi.on .mi-title { font-weight: 600; }
+.menu .sep { margin: 4px -4px; }
+.pop-title { font-weight: 600; font-size: 16px; }
+.mode { border-radius: var(--r-m); background: var(--panel); border-color: var(--line-strong); font-weight: 400; }
+.mode:hover { background: var(--hover); }
+.mode.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.preview, .win-list { border-radius: var(--r-m); }
+.waiting { border-radius: var(--r-m); }
+
+.modal-backdrop { backdrop-filter: none; }
+.modal { border-radius: var(--r-l); border: 0; box-shadow: var(--shadow-dlg); }
+.modal-head { padding: 24px 24px 8px; }
+.modal-head h2 { font-size: 20px; font-weight: 600; line-height: 28px; letter-spacing: 0; }
+.modal-body { padding: 8px 24px 4px; }
+.modal-foot { padding: 16px 24px 24px; }
+.win-tabs { margin: 0 -24px 16px; padding: 0 24px; }
+.frow > label { font-weight: 400; font-size: 14px; color: var(--ink); }
+.frow .help { color: var(--muted); }
+
+.toast {
+  background: var(--raised); color: var(--ink); border-radius: var(--r-m); box-shadow: var(--shadow-pop);
+  border: 1px solid var(--line); font-size: 14px; padding: 12px 14px;
+}
+.toast.error { background: var(--raised); color: var(--ink); border-left: 4px solid var(--rec); }
+.toast.ok { border-left: 4px solid var(--ok); }
+
+/* ── Fit while recording: the strip carries more controls then ───────────── */
+.control { flex-wrap: wrap; row-gap: 8px; }
+.timer, .opt-label, .rec-hint, .pl-line { white-space: nowrap; }
+.pipe-status { min-width: 200px; max-width: 230px; }
+.side-panel .panel-head { min-width: 0; }
+.side-panel .tabs { overflow-x: auto; scrollbar-width: none; }
+.side-panel .tabs::-webkit-scrollbar { display: none; }
+.side-panel .tab { padding: 0 8px; }
+.side-panel .tab::after, .side-panel .tab.active::after { left: 8px; right: 8px; }
+.side-panel .panel-head > .ghost-btn { flex: none; }
+.control { gap: 10px; }
+.opt-group { flex: 1 1 0; min-width: 0; }   /* idle: stays beside Record, even with Options open */
+.meter { width: 100px; }
+/* Side "Snap" duplicates the strip's Capture button: icon only (title keeps the label) */
+#snapSideBtn { font-size: 0; gap: 0; width: 28px; height: 28px; padding: 0; justify-content: center; }
+#snapSideBtn .ico { width: 16px; height: 16px; }
+
+/* ── Narrow windows ──────────────────────────────────────────────────────── */
+@media (max-width: 820px) {
+  .topbar { padding: 8px 12px 4px; }
+  .control { margin: 4px 8px 0; }
+  .opt-group { border-left: 0; padding-left: 0; }
+  .workspace { padding: 8px; }
+}
