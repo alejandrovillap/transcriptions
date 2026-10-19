@@ -65,6 +65,8 @@ class SpeakerEmbedder:
 RELIABLE_WINDOW_SEC = 1.5
 # In automatic mode a "speaker" with less speech than this is merged into the closest one.
 MIN_SPEAKER_SEC = 4.0
+# ...and two speakers whose centroids are closer than this (cosine distance) are one voice.
+MERGE_CENTROID_DIST = 0.45
 # Speaker turns this short (seconds and words) between two turns of one speaker are
 # relabelled to that speaker.
 MIN_TURN_SEC = 1.0
@@ -126,6 +128,14 @@ def cluster_and_label(windows, num_speakers=None, threshold=0.6):
             del_c = cents.pop(small)
             target = _nearest(del_c, cents)
             fit_labels = [target if l == small else l for l in fit_labels]
+        while len(set(fit_labels)) > 1:
+            cents = _centroids(vectors[fit_idx], fit_labels)
+            ks = sorted(cents)
+            dist, a, b = min((1 - float(cents[a] @ cents[b]), a, b)
+                             for i, a in enumerate(ks) for b in ks[i + 1:])
+            if dist >= MERGE_CENTROID_DIST:
+                break
+            fit_labels = [a if l == b else l for l in fit_labels]
 
     raw_labels = [None] * len(windows)
     for k, i in enumerate(fit_idx):
