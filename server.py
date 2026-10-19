@@ -1234,6 +1234,11 @@ def main():
         args.port = port
     url = f"http://{args.host}:{args.port}"
     print(f"voice-rec web UI: {url}")
+    # Windows build: lets call_watcher.py find the running server (whatever port it got).
+    import atexit
+    server_info = S.WEBUI_DIR / "server.json"
+    S._write_json(server_info, {"url": url, "pid": os.getpid()})
+    atexit.register(lambda: server_info.unlink(missing_ok=True))
     if not args.no_browser:
         import threading
         threading.Timer(1.2, lambda: webbrowser.open(url)).start()

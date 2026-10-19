@@ -106,6 +106,36 @@ que muestran algo nuevo. Se activa con el interruptor **Auto frames** antes de g
 
 Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
 
+## Grabación automática de llamadas (exclusivo de esta versión)
+
+`callwatch.bat` deja un **icono junto al reloj** que vigila el micrófono. Cuando Teams, Zoom,
+Webex, Slack, Meet en el navegador u otra app de llamadas toma el micrófono:
+
+1. **Al empezar la llamada**, aparece un aviso abajo a la derecha, "Llamada detectada en Teams —
+   ¿Grabar?". Si no respondes en 45 s, no graba. El servidor web se arranca solo, sin ventana.
+2. **Al terminar** (la app suelta el micrófono durante 15 s), detiene la grabación y pregunta si
+   quieres **versión final + minuta**, **solo la final** o **nada**. Cuando están listas, te avisa.
+
+Desde el menú del icono (clic derecho) se configura:
+- **Al empezar una llamada:** preguntar (por defecto), grabar automáticamente o no hacer nada.
+- **Al terminar la llamada:** preguntar, final + minuta, solo final o nada.
+- **Iniciar con Windows:** añade el vigilante al inicio de sesión.
+- También: abrir voice-rec, detener la grabación y salir.
+
+El icono se pone **rojo** mientras graba. Las grabaciones van al último proyecto usado en la
+interfaz; para fijar uno, pon `"project": "nombre"` en `.webui\call_watcher.json`. En ese mismo
+archivo están los tiempos y la lista de apps que cuentan como llamada.
+
+Para ver qué apps están usando el micrófono en este momento:
+`.venv\Scripts\python call_watcher.py --status`.
+
+**Cómo detecta las llamadas:** lee el mismo registro de Windows que enciende el icono de micrófono
+de la barra de tareas. Solo cuentan las apps de la lista, así que el propio grabador o un dictado
+no disparan nada.
+
+> Avisa siempre a los participantes de que la reunión se graba. El modo automático graba sin
+> preguntar: úsalo solo donde tengas consentimiento.
+
 ## Minutas (exclusivo de esta versión)
 
 Pestaña **Minutes**, junto a *Beautified*: genera la minuta formal de la reunión con Claude, en el

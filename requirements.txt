@@ -11,6 +11,8 @@ pillow>=10.0            # screenshot_helper.py (Windows)
 # auto frames (autoframes.py; Level 1 = CLIP via transformers)
 opencv-python-headless>=4.8
 transformers>=4.40
+# call watcher (call_watcher.py): icon next to the clock
+pystray>=0.19
 # diarization (optional, needed for --speakers flag)
 speechbrain>=1.0.0
 scikit-learn>=1.0.0
