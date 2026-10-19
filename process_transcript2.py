@@ -81,7 +81,7 @@ Use the style patterns and logic shown in this skeleton:
             --color-default: #475569;
         }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, sans-serif;
             line-height: 1.6;
             color: var(--text-main);
             background-color: var(--bg-main);

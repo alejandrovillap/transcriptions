@@ -1820,7 +1820,7 @@ $('#docFrame').addEventListener('load', () => {
     const s = await api('GET', '/api/status');
     st.settings = s.settings; st.recorder = s.recorder; st.claude = s.claude;
     if (s.recorder.pipeline) st.pipeline = s.recorder.pipeline;
-    if (!s.helper) toast('screenshot_helper is missing (screenshot_helper.py on Windows, ./compile.sh on macOS)', 'error', 8000);
+    if (!s.helper) toast('screenshot_helper.py is missing', 'error', 8000);
     await loadProjects();
     if (st.project) await selectProject(st.project);
     else renderAll();

@@ -1,322 +1,241 @@
-# voice-rec
+# Transcripción y minutas de reuniones (Windows)
 
-Local, real-time speech-to-text with screenshot capture. Records voice commentary alongside screen captures, then uses an LLM to clean up the transcript using OCR'd screenshot text as reference context.
+Graba reuniones y llamadas en **Windows 10/11**, las transcribe en local en **inglés y español**
+(también mezclados), toma capturas de pantalla con OCR y genera con Claude una **versión anotada**
+y una **minuta formal** con decisiones y acuerdos.
 
-Built for narrating what's on screen -- record a coding session, walkthrough, or meeting, take screenshots at key moments, and get a polished document at the end.
+- **Transcripción local**, sin nube: Parakeet o Whisper en tu equipo. El audio no sale de tu máquina.
+- **Audio de la llamada**: con audífonos también graba lo que dicen los demás.
+- **Detección de llamadas**: un icono junto al reloj pregunta "¿Grabar?" cuando Teams, Zoom, Meet… toman el micrófono.
+- **Capturas** con atajo, por área o por ventana, y **escenas automáticas** cuando cambia la pantalla.
+- **Hablantes** separados automáticamente (diarización).
+- **Versión anotada, minuta y chat** sobre la reunión, con Claude Code.
 
-## Features
+## Instalación (una vez)
 
-- Real-time transcription, fully local (no cloud API), with a choice of engines: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (default), [GigaAM v3](https://github.com/salute-developers/GigaAM) or [Parakeet TDT v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) via [onnx-asr](https://github.com/istupakov/onnx-asr) -- see [ASR engines](#asr-engines)
-- Voice Activity Detection via [Silero VAD](https://github.com/snakers4/silero-vad) -- only transcribes when you speak
-- Automatic language detection (Russian/English) with periodic re-evaluation
-- Global hotkeys for screenshots (`Ctrl+Shift+S`) and text selection capture (`Ctrl+Shift+W`)
-- OCR on screenshots via [EasyOCR](https://github.com/JaidedAI/EasyOCR) (Russian + English)
-- Optional speaker diarization using [SpeechBrain](https://github.com/speechbrain/speechbrain) ECAPA-TDNN embeddings
-- Post-processing: send raw transcript + OCR text to an LLM for cleanup and HTML generation
-- Audio recording export (MP3 via ffmpeg)
+Requisitos: Windows 10/11, Python 3.10+ (probado con 3.13) y unos 5 GB libres (torch CPU y modelos).
+Opcional: [ffmpeg](https://www.gyan.dev/ffmpeg/builds/) en el PATH para guardar el audio en MP3
+(sin él se guarda en WAV), y [Claude Code](https://claude.com/claude-code) (`claude`) con sesión
+iniciada para la versión anotada, la minuta y el chat.
 
-## Architecture
-
-```
-                  +-----------+
-Microphone -----> | sounddevice|
-                  +-----+-----+
-                        |
-                  float32 audio chunks
-                        |
-                  +-----v-----+       +------------------+
-                  | Silero VAD | ----> | transcribe_queue |
-                  +-----------+       +--------+---------+
-                                               |
-                                    +----------v-----------+
-                                    | ASR engine (asr_engines)|
-                                    +----------+-----------+
-                                               |
-                         +---------------------+---------------------+
-                         |                                           |
-                  +------v------+                             +------v------+
-                  | Transcript  |                             | embed_queue |
-                  |  (.txt file)|                             +------+------+
-                  +-------------+                                    |
-                                                           +---------v--------+
-                                                           | SpeechBrain      |
-                                                           | ECAPA-TDNN       |
-                                                           | (speaker embeds) |
-                                                           +------------------+
-
-  +-------------------+       +----------+       +-----------+
-  | screenshot_helper | ----> | OCR      | ----> | .txt next |
-  | (Swift, global    |       | (EasyOCR)|       | to .png   |
-  |  hotkeys)         |       +----------+       +-----------+
-  +-------------------+
+```bat
+setup.bat
 ```
 
-The system runs several threads concurrently:
+Crea `.venv\` e instala todo (torch en versión CPU). La primera grabación descarga los modelos:
+Parakeet (~640 MB), Silero VAD y EasyOCR; Whisper (~1.6 GB) solo si lo eliges.
 
-1. **Audio capture** -- `sounddevice` streams microphone input at 16kHz mono
-2. **VAD loop** (main thread) -- Silero VAD processes 32ms windows, detects speech start/end based on configurable silence threshold
-3. **Transcription worker** -- dequeues speech segments, runs the ASR engine (Whisper / GigaAM / Parakeet), writes timestamped lines to the transcript file
-4. **Embedding worker** (optional) -- computes speaker embeddings for phrase-level audio chunks for post-session diarization
-5. **OCR worker** -- processes screenshots through EasyOCR, saves recognized text alongside images
-6. **Screenshot helper** -- a native macOS binary (Swift/Carbon) that registers system-wide hotkeys and captures the full screen, an area or a single window (configurable via a JSON file it re-reads on every capture). It also provides the area/window picker overlays used by the web UI (`--select-region`, `--pick-window`, `--list-windows`, `--capture`)
+## Uso
 
-The screenshot helper communicates with Python through stdout: it prints `SCREENSHOT:<path>` or `SELECTION:<base64>` lines that the main process reads and injects as markers into the transcript.
+**Interfaz web** (recomendado):
 
-## Requirements
-
-- macOS (screenshot helper uses Carbon/Cocoa APIs)
-- Python 3.10+
-- ffmpeg (optional, for MP3 audio export)
-- Screen Recording permission (for screenshots)
-- Accessibility permission (for text selection capture)
-
-## Setup
-
-```bash
-# Install Python dependencies
-pip install -r requirements.txt
-
-# Compile the screenshot helper
-swiftc -O -o screenshot_helper screenshot_helper.swift \
-    -framework Cocoa -framework Carbon -framework CoreGraphics
+```bat
+webui.bat
 ```
 
-## Usage
+Abre http://127.0.0.1:8765, o el siguiente puerto libre si Windows tiene reservado el 8765
+(la consola muestra la dirección real). En PowerShell, desde la carpeta, escribe `.\webui.bat`.
+Elige el idioma, el área de captura (pantalla completa, un área o una ventana; la ventana se
+captura aunque esté tapada por otras) y pulsa **Grabar**. El resto de ajustes está en **▸ Opciones**.
+La interfaz está en español; el botón **ES** junto al tema la cambia a inglés.
 
-### Recording
+**Consola**:
 
-```bash
-# Basic recording (auto language detection)
-python main.py myproject
-
-# Specify language
-python main.py myproject --lang ru
-
-# With speaker diarization (2 speakers)
-python main.py myproject --speakers 2
-
-# Auto-detect number of speakers
-python main.py myproject --speakers auto
-
-# Save audio recording
-python main.py myproject --save-audio
-
-# Adjust silence threshold (seconds)
-python main.py myproject --pause 2.0
-
-# Another recognition engine (see "ASR engines")
-python main.py myproject --engine gigaam
-python main.py myproject --engine parakeet --vocab-file notes.md --vocab-correct
+```bat
+record.bat miproyecto                     :: auto (inglés/español), 180 min máx.
+record.bat miproyecto 60 --lang es        :: solo español, se detiene a los 60 min
+record.bat miproyecto --speakers 2        :: con diarización (2 hablantes)
+record.bat miproyecto --save-audio --system-audio
 ```
 
-During recording:
-- `Ctrl+Shift+S` -- take a screenshot
-- `Ctrl+Shift+W` -- capture selected text
-- `Ctrl+C` -- stop recording
+Durante la grabación:
+- `Ctrl+Shift+S`: captura de pantalla (con OCR)
+- `Ctrl+Shift+W`: captura el texto seleccionado (simula Ctrl+C y lee el portapapeles)
+- `Ctrl+C`: detener (en consola)
 
-Output is organized per project:
+Los atajos son globales: mientras graba, `Ctrl+Shift+S` / `Ctrl+Shift+W` no llegan a otras apps
+(por ejemplo, Ctrl+Shift+W ya no cierra la ventana del navegador). Si otra app ya los tiene
+registrados, se indica en el log.
 
-```
-projects/
-  myproject/
-    transcripts/
-      transcript_20260618_143022.txt
-    screenshots/
-      screenshot_20260618_143045_123.png
-      screenshot_20260618_143045_123.txt   # OCR result
-    session_20260618_143022.pkl            # diarization data
-```
+## Grabación automática de llamadas
 
-### Web UI (studio)
+`callwatch.bat` deja un **icono junto al reloj** que vigila el micrófono. Cuando Teams, Zoom,
+Webex, Slack, Meet en el navegador u otra app de llamadas toma el micrófono:
 
-A browser interface on top of the same recorder. The console mode above still works unchanged.
+1. **Al empezar la llamada**, aparece un aviso abajo a la derecha, "Llamada detectada en Teams —
+   ¿Grabar?". Si no respondes en 45 s, no graba. El servidor web se arranca solo, sin ventana.
+2. **Al terminar** (la app suelta el micrófono durante 15 s), detiene la grabación y pregunta si
+   quieres **versión final + minuta**, **solo la final** o **nada**. Cuando están listas, te avisa.
 
-```bash
-./webui.sh                      # or: python server.py  → http://127.0.0.1:8765
-VOICE_REC_PYTHON=/path/to/python ./webui.sh --port 9000 --no-browser
-```
+Desde el menú del icono (clic derecho) se configura:
+- **Al empezar una llamada:** preguntar (por defecto), grabar automáticamente o no hacer nada.
+- **Al terminar la llamada:** preguntar, final + minuta, solo final o nada.
+- **Iniciar con Windows:** añade el vigilante al inicio de sesión.
+- También: abrir la interfaz, detener la grabación y salir.
 
-- **Start / Stop**: runs `main.py` as a subprocess. Stop sends SIGINT, exactly like Ctrl+C.
-- **Live transcript**: phrases appear as they're recognized, with a mic level meter and listening / transcribing state.
-- **Screenshots panel**: each capture shows its pipeline status: Captured → Transcript → OCR → Beautified vN. `Snap` takes one without the hotkey.
-- **Capture area**: full screen, a dragged **area**, or a specific **window**. A window is captured even when other windows cover it. Changes apply immediately, even mid-recording, so the UI itself can stay out of screenshots.
-- **Beautify**: builds a *full* annotated transcript (every utterance, real speakers, NEW / CONFIRMS / UPDATES callouts, screenshots inline) through Claude Code (`claude -p`). Every press creates a new version:
-  - *Update* (default) extends the previous version with the new material.
-  - *Full rebuild* regenerates the whole document.
-  - *Final* runs automatically when recording stops. It uses the diarized transcript and is also copied to `docs/`.
-- **Ask**: chat about the transcript (live or saved) while recording keeps running. It follows up with only the new lines.
+El icono se pone **rojo** mientras graba. Las grabaciones van al último proyecto usado en la
+interfaz; para fijar uno, pon `"project": "nombre"` en `.webui\call_watcher.json`. En ese mismo
+archivo están los tiempos y la lista de apps que cuentan como llamada.
 
-Per-project settings (gear icon) live in `projects/<name>/project.json`:
-- **Knowledge folder**: Claude Code runs there, so its MCP servers (e.g. `claude-context`) are available for callouts.
-- **Style reference**: the HTML whose look to copy. Defaults to `templates/annotated_transcript_style.html`.
-- **Context notes**: who's who, client name, terms that are often misheard.
+Para ver qué apps están usando el micrófono en este momento:
+`.venv\Scripts\python call_watcher.py --status`.
 
-Beautify also works from the console:
+**Cómo detecta las llamadas:** lee el mismo registro de Windows que enciende el icono de micrófono
+de la barra de tareas. Solo cuentan las apps de la lista, así que el propio grabador o un dictado
+no disparan nada.
 
-```bash
-python beautify.py myproject 20260928_110051 --mode full     # or: latest, --mode final
-```
+> Avisa siempre a los participantes de que la reunión se graba. El modo automático graba sin
+> preguntar: úsalo solo donde tengas consentimiento.
 
-Files: versions in `projects/<p>/sessions/<sid>/vN.html` (+ `manifest.json`, transcript snapshots, `chat.json`, `events.jsonl`); UI state in `.webui/`.
+## Audio de la llamada con audífonos
 
-### Re-diarization
+Con audífonos, las voces de los demás van directo a tus oídos y el micrófono no las oye. Con el
+interruptor **Audio de la llamada** (activado por defecto) se graba, mezclado con tu micrófono,
+también **lo que suena en el equipo**, es decir, lo que dicen los demás.
 
-If speaker labels need tuning, re-run diarization on saved session data without re-recording:
+- Por defecto se graban **todas las salidas** a la vez (audífonos, bocinas, monitor), así la
+  llamada se capta suene por donde suene.
+- En ⚙ Configuración → *Audio* puedes fijar un **micrófono** concreto (por defecto, el de Windows)
+  y una **salida** concreta.
+- Con *Audio de la llamada* también se graba cualquier otro sonido del equipo (un video,
+  notificaciones) mientras grabas.
+- En consola: `record.bat proyecto --system-audio [--mic-device "nombre"] [--output-device "nombre"]`.
 
-```bash
-# Inspect embeddings and distance matrix
-python rediarize.py myproject --debug
+Usa PyAudioWPatch (WASAPI loopback).
 
-# Sweep threshold values to find optimal setting
-python rediarize.py myproject --sweep
+## Motores de reconocimiento
 
-# Re-diarize with specific parameters
-python rediarize.py myproject --speakers 2
-python rediarize.py myproject --cluster-threshold 0.4
-```
+Se eligen en **Opciones → Motor** o con `--engine` en consola:
 
-### Post-processing
-
-Clean up transcripts using an LLM (Gemini, OpenAI, or OpenRouter). The LLM corrects speech recognition errors using OCR'd screenshot text as reference, then generates HTML output.
-
-```bash
-# Set API key
-export GEMINI_API_KEY=...   # or OPENAI_API_KEY, OPENROUTER_API_KEY
-
-# Process a day's transcripts
-python process_transcript.py myproject 2026-06-18
-
-# Date range
-python process_transcript.py myproject 2026-06-17 --to 2026-06-18
-
-# Time range within a day
-python process_transcript.py myproject 2026-06-18 --time-from 14:00 --time-to 15:30
-
-# Choose model/provider
-python process_transcript.py myproject 2026-06-18 --model gpt-4.1-mini
-python process_transcript.py myproject 2026-06-18 --provider openrouter
-```
-
-Output goes to `projects/myproject/docs/` as both `.txt` and `.html`.
-
-## ASR engines
-
-`--engine` picks the speech recognizer (`asr_engines.py`). All engines feed the same transcript format and word timestamps, so diarization, screenshots and the web UI work the same with each.
-
-| Engine | Model | Languages | Notes |
-|---|---|---|---|
-| `whisper` (default) | faster-whisper `large-v3-turbo`, int8 | any, auto-detect | Supports vocab hints (`hotwords`); slowest on CPU; can hallucinate on silence |
-| `gigaam` | GigaAM v3 e2e RNN-T (`gigaam-v3-e2e-rnnt`), int8 | Russian only | Best for Russian; punctuation, ё; `--lang en` is refused |
-| `parakeet` | NVIDIA Parakeet TDT 0.6B v3, int8 | 25 European incl. ru/en, auto-detect | Good for mixed ru/en; weaker than GigaAM on Russian |
-
-- `--asr-model` overrides the model: a Whisper size, or an onnx-asr name such as `gigaam-v3-e2e-ctc`.
-- GigaAM and Parakeet have no `hotwords`. With `--vocab-correct`, `- "heard" → "meant"` lines from `--vocab-file` are applied to the output as replacements instead.
-- Long phrases are split into ≤20 s (GigaAM) / ≤60 s (Parakeet) chunks at the quietest point, since the models degrade on long input.
-- Models download into the Hugging Face cache on first use (GigaAM ~250 MB, Parakeet ~700 MB). To fetch them ahead of time:
-
-  ```bash
-  python -c "import onnx_asr; onnx_asr.load_model('gigaam-v3-e2e-rnnt', quantization='int8')"
-  python -c "import onnx_asr; onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3', quantization='int8')"
-  ```
-
-Measured on an M3 Max, CPU, 140 s of Russian speech in 7 phrases (`bench_asr.py`):
-
-| Engine | Compute | RTF | Peak RAM |
-|---|---|---|---|
-| whisper | 90.0 s | 0.64 | 2.3 GB |
-| gigaam | 4.4 s | 0.031 | 0.7 GB |
-| gigaam-ctc | 4.3 s | 0.030 | 0.6 GB |
-| parakeet | 4.8 s | 0.034 | 1.6 GB |
-
-To compare engines on your own recording (run it while the recorder is stopped):
-
-```bash
-python bench_asr.py projects/myproject/recording_20261007_083740.mp3 --start 60 --dur 300 --ref reference.txt
-```
-
-`--ref` is a hand-corrected transcript of the same range; with it the script reports WER/CER. Per-engine transcripts go to `bench_out/`.
-
-## Auto frames
-
-Instead of (or besides) pressing the hotkey, the screen can be captured every second and only the frames worth keeping are stored. Turn it on with `--auto-frames 1`, the **Auto frames** switch before recording, or the **Auto** button while recording.
-
-```bash
-python main.py myproject 60 --auto-frames 1
-```
-
-How frames are filtered (`autoframes.py`, Level 0, pixels only, ~20 ms per frame):
-
-- a frame becomes a candidate only after the screen has stood still for 1.5 s after a change, so transitions, scrolling in progress, typing and talking heads never qualify;
-- regions that keep moving (a webcam picture-in-picture) are masked out; a mostly-moving frame is treated as video and skipped; a still frame with motion and little detail elsewhere is treated as a camera view and skipped;
-- a candidate opens a new *scene* if its changed area differs from the current scene by more than 3%, otherwise it extends the scene (or, between 0.5% and 3%, replaces the scene's "last state" image, e.g. a form being filled in);
-- going back to a recent slide is recorded as a revisit (`same_as`), a vertically shifted frame is marked `scroll_of`.
-
-**Detect video** (capture popover). When the capture is a whole browser or call window, most of it is static page and the video is one rectangle, so slide changes look tiny and slides get merged. With the video playing, *Detect video* watches the area for ~6 s and finds the player (`video_detect.py`): a decoded video flickers by a level or two even on a still slide while a rendered page is bit-for-bit static, so the flickering blob is the video; it is snapped to the player border if one is visible, otherwise grown to a video aspect ratio and padded. A paused video is found by its border alone. The crop is drawn on the capture preview: drag it to move, drag an edge or corner to resize (or *Set by hand* without detecting); it takes effect on the next frame, even mid-recording. The crop (`frames_crop` in the capture config, fractions of the area) applies to auto frames only; screenshots stay whole; choosing another capture area resets it.
-
-Besides the changed area, a candidate also counts as a new scene when more than half of the slide's *content* changed (a new title on a dark, almost empty slide), and drift is measured from the scene's first state too, so small steps can't add up to swallowing a slide.
-
-Scenes are saved in `projects/<project>/frames/<session>/` (`scenes.json` + JPEGs) and shown in the transcript at the moment they appeared (marked *auto*); clicking a card in the **Frames** tab scrolls the transcript there. The transcript file itself is not changed.
-
-**Hiding.** Every transcript line, screenshot and auto frame has an eye button (on hover). A hidden line stays in place, faded; a hidden screenshot or frame turns grey. Hidden items are kept in `sessions/<session>/visibility.json` and **left out of Beautify**; everything visible goes in, and visible auto frames are given to it as screenshots at their time. Next to the eye, a second button hides **this and the ones like it** in one click (Undo in the notice): for lines, the same words after normalising, or mostly the same character trigrams for longer ones (recognizer hallucinations, repeated phrases, "угу"); for pictures, every screenshot and frame whose CLIP embedding is ≥ 0.88 to it (`similar.py`; the same talking head at different times was ≥ 0.93, different slides ≤ 0.84). Embeddings are cached in `.emb/` next to the images; Level 1 writes them while recording. **Pick** (Frames tab) keeps the N frames with most said about them (pointing phrases like "вот здесь", "as you can see", time on screen, words, novelty) and hides the rest; the eye brings any frame back. From the console:
-
-```bash
-python select_frames.py myproject 20261016_120000 -n 10 --apply
-```
-
-When a recording stops, the UI asks whether to build the final version (Settings → *Offer to build the final version*); "Not now" leaves the **Beautify** button for later.
-
-To tune thresholds on a recorded talk (and measure recall against hand-made screenshots of it):
-
-```bash
-python autoframes.py talk.mp4 --out /tmp/frames [--truth projects/x/screenshots] [--scene-frac 0.03 ...]
-```
-
-It writes `index.html` with every scene for a quick look.
-
-**Level 1** (`frames_l1.py`, on by default) runs CLIP ViT-B/32 (~14 ms per candidate on MPS, downloaded once, ~600 MB) on each Level-0 candidate:
-
-- zero-shot class (slide, diagram, table, code, web, document, face, desktop), shown on the frame cards; a frame that is mostly a face, a webcam or a video call is dropped (`p(face) ≥ 0.6`);
-- semantic dedup: a candidate with cosine ≥ 0.92 to a recent scene is that scene again (its "last state", or a revisit); 0.85–0.92 is kept but marked `l1_near`, and **Pick** takes only one of such a pair.
-
-On a slide talk, different slides were ≤ 0.84 apart and the same slide later ≥ 0.966. Turn it off with `--no-frames-l1` (console), the *Smart filter* switch in Settings (web UI), or `--no-l1` (offline); if the model can't load, auto frames run on Level 0 alone.
-
-Planned: Level 2 (OCR + VLM caption) as an `Enricher`, and a final pick by a text LLM over the transcript and scene list.
-
-## Configuration
-
-Key constants in `main.py`:
-
-| Parameter | Default | Description |
+| Motor | Idiomas | Notas |
 |---|---|---|
-| `MODEL_SIZE` | `large-v3-turbo` | Whisper model variant (`--engine whisper`) |
-| `DEVICE` | `cpu` | Inference device (`cpu` or `cuda`) |
-| `COMPUTE_TYPE` | `int8` | Quantization for faster-whisper |
-| `VAD_THRESHOLD` | `0.5` | Speech probability threshold |
-| `SILENCE_DURATION_MS` | `1500` | Silence before ending a phrase |
-| `MIN_SPEECH_DURATION_MS` | `250` | Minimum speech to transcribe |
-| `BEAM_SIZE` | `5` | Whisper beam search width |
+| `parakeet` (por defecto en la interfaz) | Detecta el idioma él mismo (25 idiomas europeos, incluidos inglés y español) | Muy rápido en CPU, con puntuación. No admite *hotwords*: usa `--vocab-correct` para aplicar a la salida las correcciones de tus notas |
+| `whisper` | Inglés/español detectado en cada frase, o fijo con `--lang en/es` | Admite *hotwords* (los términos de tus notas ayudan al reconocimiento). Mucho más lento en CPU |
 
-## File overview
+```bat
+record.bat miproyecto --engine parakeet --vocab-file projects\miproyecto\notes.md --vocab-correct
+```
 
-| File | Purpose |
+Para comparar motores sobre una grabación propia (velocidad, memoria y, si das un texto de
+referencia corregido a mano, la tasa de error WER/CER):
+
+```bat
+.venv\Scripts\python bench_asr.py projects\miproyecto\recording_XXXX.wav --dur 300
+```
+
+## Versión anotada
+
+Botón **Anotar**: Claude convierte la transcripción y las capturas en un documento HTML completo.
+Conserva todo lo dicho, identifica a los hablantes por su nombre, agrupa por temas, marca lo
+NUEVO / CONFIRMA / ACTUALIZA frente a lo que ya se sabía y coloca las capturas en su momento.
+Cada pulsación crea una versión (v1, v2…): *Actualizar con lo nuevo*, *Rehacer completa* o
+*Versión final* (al detener la grabación; también se copia a `docs\`).
+
+## Minutas
+
+Pestaña **Minuta**: genera la minuta formal de la reunión con Claude, en el idioma de la reunión.
+Incluye:
+- datos de la reunión y asistentes con su rol;
+- objetivo y temas tratados;
+- **decisiones**;
+- **acuerdos y tareas** con responsable, fecha compromiso y estado;
+- riesgos, temas abiertos y próximos pasos.
+
+Cada punto cita el minuto `[HH:MM:SS]` en que se dijo.
+
+- Usa la versión anotada si existe, porque ahí los hablantes ya tienen nombre. Si no existe, usa la
+  transcripción, sin las líneas ocultas. También tiene en cuenta las notas del proyecto.
+- No inventa datos: lo que no se dijo queda como "Por definir", y distingue una decisión de una
+  simple propuesta.
+- Cada pulsación crea una versión nueva (m1, m2…) en `sessions\<sesión>\minutes\`, con copia en
+  `projects\<proyecto>\docs\`.
+- Desde consola: `.venv\Scripts\python minutes.py <proyecto> latest`.
+
+## Escenas automáticas
+
+En vez de pulsar `Ctrl+Shift+S`, la pantalla se captura cada segundo y solo se guardan los momentos
+que muestran algo nuevo. Se activa con **Escenas automáticas** antes de grabar, con el botón
+**Auto** durante la grabación o con `--auto-frames 1` en consola.
+
+- **Nivel 0 (píxeles):** solo cuenta una imagen cuando la pantalla se ha quedado quieta después de
+  un cambio, así que las transiciones, el scroll o alguien tecleando no generan capturas. Detecta
+  cuando se **vuelve** a una diapositiva anterior y cuando una diapositiva **se actualiza**.
+- **Nivel 1 (CLIP):** clasifica cada escena (diapositiva, diagrama, código, web, documento…),
+  descarta las caras de la webcam y junta las que son casi iguales. La primera vez descarga el
+  modelo (~600 MB).
+- **Detectar video** (en el menú de captura): si capturas una ventana entera de Teams o del
+  navegador, encuentra el reproductor y recorta las escenas a él. El recorte también se puede
+  ajustar a mano con el ratón sobre la vista previa.
+- Pestaña **Escenas**: **Elegir** se queda con las N escenas de las que más se habló (frases como
+  "como pueden ver" o "en esta diapositiva", y el tiempo en pantalla). Las visibles entran en la
+  versión anotada como capturas.
+- **Ocultar**: cada línea, captura o escena tiene un ojo para ocultarla; lo oculto no entra en la
+  versión anotada. Otro botón oculta también todas las parecidas, con opción de deshacer.
+
+Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
+
+## Otras funciones
+
+- **Pausar el micrófono** (botón *Pausa* / *Reanudar*) sin detener la grabación.
+- **Continuar una sesión anterior**: se elige la sesión y se pulsa *Grabar*; lo nuevo se añade a la
+  misma transcripción y la diarización se recalcula sobre todo.
+- **Notas del proyecto** (pestaña *Notas*): contexto y correcciones "se oyó → debe ser" que usan la
+  versión anotada, la minuta, el chat y el reconocimiento en vivo.
+- **Preguntar**: chat sobre la reunión mientras sigue la grabación.
+
+## Ajustes útiles (en `main.py`)
+
+| Parámetro | Valor | Nota |
+|---|---|---|
+| `MODEL_SIZE` | `large-v3-turbo` | Modelo de Whisper; en equipos lentos prueba `medium` o `small` |
+| `DEVICE` / `COMPUTE_TYPE` | `cpu` / `int8` | Con GPU NVIDIA y CUDA: `cuda` / `float16` |
+| `LANG_CONFIDENT` | `0.75` | Cuánta seguridad hace falta para cambiar de idioma en una frase (Whisper) |
+| `OCR_LANGS` | `["es", "en"]` | Idiomas del OCR |
+
+## Archivos
+
+| Archivo | Para qué |
 |---|---|
-| `main.py` | Main app: audio capture, VAD, transcription, screenshot integration |
-| `asr_engines.py` | Speech recognition engines (Whisper, GigaAM, Parakeet) behind one interface |
-| `autoframes.py` | Auto frames: Level-0 triage of the 1 fps capture into scenes; offline mode for videos |
-| `video_detect.py` | Find the playing video in a captured window (crop for auto frames) |
-| `similar.py` | "Hide this and similar" for pictures (CLIP embeddings, cached) |
-| `frames_l1.py` | Auto frames Level 1: CLIP class (drops faces) and semantic dedup |
-| `select_frames.py` | Score scenes against the transcript, keep the best N visible (hide the rest) |
-| `bench_asr.py` | Compare engines on a recording: speed, memory, WER/CER |
-| `screenshot_helper.swift` | Native macOS helper for global hotkeys and screen capture |
-| `speaker_id.py` | Speaker embedding (ECAPA-TDNN) and agglomerative clustering |
-| `rediarize.py` | Re-run diarization on saved sessions with different parameters |
-| `process_transcript.py` | LLM-based transcript cleanup and HTML generation |
-| `server.py` | Web UI server (FastAPI + WebSocket); drives `main.py`, Beautify and chat |
-| `web/` | Web UI front end (static HTML/CSS/JS, no build step, Electron-ready) |
-| `beautify.py` | Full annotated transcript via Claude Code (also a console tool) |
-| `claude_cli.py` | Helpers for headless `claude -p` (stream-json parsing, progress labels) |
-| `sessions.py` | Transcript parsing, session listing, settings, beautify manifests |
-| `events.py` | Optional JSON-lines event stream from `main.py --events` |
-| `templates/annotated_transcript_style.html` | Default style reference for Beautify |
-| `requirements.txt` | Python dependencies |
+| `main.py` | Grabador: audio, detección de voz, transcripción, capturas, OCR, diarización |
+| `audio_sources.py` | Micrófono + audio del sistema (WASAPI loopback) |
+| `asr_engines.py` | Motores Parakeet / Whisper |
+| `screenshot_helper.py` | Atajos globales, capturas por pantalla/área/ventana, escenas automáticas |
+| `server.py` | Interfaz web (FastAPI + WebSocket) |
+| `call_watcher.py` | Detección de llamadas e icono junto al reloj |
+| `beautify.py` | Versión anotada con Claude Code |
+| `minutes.py`, `minutes_api.py` | Minutas |
+| `autoframes.py`, `frames_l1.py`, `video_detect.py`, `select_frames.py`, `similar.py` | Escenas automáticas |
+| `speaker_id.py`, `rediarize.py` | Diarización y re-diarización |
+| `web/` | Interfaz (HTML/CSS/JS sin compilación; `i18n.js` traduce al español) |
+| `setup.bat`, `webui.bat`, `record.bat`, `callwatch.bat` | Instalar y lanzar |
+
+<!-- upstream -->
+## Traer las mejoras del proyecto original
+
+Esta copia tiene el repositorio original como remoto `upstream` **solo de lectura** (el push está
+deshabilitado). El trabajo propio vive en la rama `windows`.
+
+```bat
+git fetch upstream
+git log --oneline windows..upstream/master      :: ¿qué hay nuevo?
+git merge upstream/master                       :: integrarlo
+```
+
+Al integrar, revisa sobre todo:
+- Cambios del helper de capturas original: hay que replicarlos en `screenshot_helper.py`.
+  Los archivos para otras plataformas se descartan.
+- Cosas específicas del ruso: idiomas, OCR, prompts.
+<!-- /upstream -->
+
+## Notas
+
+- La captura de pantalla completa toma el monitor **principal**; para otro monitor usa "área" o "ventana".
+- Las ventanas minimizadas no se pueden capturar: se hace captura de pantalla completa y se avisa en el log.
+- Las coordenadas son píxeles físicos (el helper es DPI-aware), así que funciona con escalado 125 %/150 %.
+- El modelo de diarización de SpeechBrain se copia en vez de enlazarse (los enlaces simbólicos
+  en Windows necesitan permisos de administrador).
+
+## Créditos
+
+Basado en [raliev/audiotranscripts](https://github.com/raliev/audiotranscripts), adaptado y ampliado
+para Windows en inglés y español.

@@ -42,8 +42,7 @@ SAMPLE_RATE = 16000
 VAD_THRESHOLD = 0.5
 SILENCE_DURATION_MS = 1500
 MIN_SPEECH_DURATION_MS = 250
-SCREENSHOT_HELPER = Path(__file__).parent / (
-    "screenshot_helper.py" if sys.platform == "win32" else "screenshot_helper")
+SCREENSHOT_HELPER = Path(__file__).parent / "screenshot_helper.py"
 SUPPORTED_LANGS = ("en", "es")
 OCR_LANGS = ["es", "en"]
 BEAM_SIZE = 5
@@ -706,16 +705,15 @@ def setup_console():
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
-    if sys.platform == "win32":
-        try:
-            import ctypes
-            k32 = ctypes.windll.kernel32
-            h = k32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-            mode = ctypes.c_uint32()
-            if k32.GetConsoleMode(h, ctypes.byref(mode)):
-                k32.SetConsoleMode(h, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
-        except Exception:
-            pass
+    try:
+        import ctypes
+        k32 = ctypes.windll.kernel32
+        h = k32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if k32.GetConsoleMode(h, ctypes.byref(mode)):
+            k32.SetConsoleMode(h, mode.value | 0x0004)  # ENABLE_VIRTUAL_TERMINAL_PROCESSING
+    except Exception:
+        pass
 
 
 def main():
@@ -909,7 +907,7 @@ def main():
 
     # Start audio stream
     stream = None
-    if sys.platform == "win32" and (args.system_audio or args.mic_device):
+    if args.system_audio or args.mic_device:
         # Windows build: microphone + what you hear (the others in a call with a headset).
         try:
             from audio_sources import MixedInput
@@ -933,9 +931,7 @@ def main():
     stream.start()
 
     # Start native screenshot helper
-    helper_cmd = [str(SCREENSHOT_HELPER), str(screenshot_dir.resolve())]
-    if SCREENSHOT_HELPER.suffix == ".py":
-        helper_cmd.insert(0, sys.executable)
+    helper_cmd = [sys.executable, str(SCREENSHOT_HELPER), str(screenshot_dir.resolve())]
     if args.capture_config:
         helper_cmd.append(str(Path(args.capture_config).resolve()))
     screenshot_proc = subprocess.Popen(
@@ -947,7 +943,7 @@ def main():
         encoding="utf-8",
         errors="replace",
         # Keep Ctrl+C for main.py only; it stops the helper itself.
-        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
+        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
     )
     # Drain the helper's log so a full stderr pipe can never block it.
     threading.Thread(target=lambda: [None for _ in screenshot_proc.stderr], daemon=True).start()

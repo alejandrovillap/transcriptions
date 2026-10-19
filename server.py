@@ -42,8 +42,7 @@ ENGINES = ("whisper", "gigaam", "parakeet")   # main.py --engine (see asr_engine
 
 ROOT = S.ROOT
 WEB_DIR = ROOT / "web"
-IS_WINDOWS = sys.platform == "win32"
-HELPER = ROOT / ("screenshot_helper.py" if IS_WINDOWS else "screenshot_helper")
+HELPER = ROOT / "screenshot_helper.py"
 CAPTURE_CONFIG = S.WEBUI_DIR / "capture.json"
 CAPTURE_PREVIEW = S.WEBUI_DIR / "capture_preview.png"
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -76,17 +75,14 @@ hub = Hub()
 
 
 def helper_cmd(*args: str) -> list[str]:
-    """The screenshot helper: a Python script on Windows, a native binary on macOS."""
-    if HELPER.suffix == ".py":
-        python = S.load_settings().get("recorder_python") or sys.executable
-        return [python, str(HELPER), *args]
-    return [str(HELPER), *args]
+    """The screenshot helper (screenshot_helper.py), run with the recorder's Python."""
+    python = S.load_settings().get("recorder_python") or sys.executable
+    return [python, str(HELPER), *args]
 
 
-# A child in its own process group / session, so Ctrl+C in the server console
-# doesn't kill the recorder before it finalizes (the server stops it itself).
-CHILD_FLAGS = ({"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP} if IS_WINDOWS
-               else {"start_new_session": True})
+# A child in its own process group, so Ctrl+C in the server console doesn't kill
+# the recorder before it finalizes (the server stops it itself).
+CHILD_FLAGS = {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
 
 
 async def run_cmd(*cmd, timeout=120) -> tuple[int, str, str]:
@@ -197,12 +193,12 @@ class Recorder:
             cmd.append("--save-audio")
         if opts.get("auto_frames"):
             cmd += ["--auto-frames", "1"]
-        if IS_WINDOWS:   # Windows build: mic + what you hear (audio_sources.py)
-            if opts.get("system_audio", settings.get("system_audio", True)):
-                cmd.append("--system-audio")
-            for key, flag in (("mic_device", "--mic-device"), ("output_device", "--output-device")):
-                if settings.get(key):
-                    cmd += [flag, settings[key]]
+        # mic + what you hear (audio_sources.py)
+        if opts.get("system_audio", settings.get("system_audio", True)):
+            cmd.append("--system-audio")
+        for key, flag in (("mic_device", "--mic-device"), ("output_device", "--output-device")):
+            if settings.get(key):
+                cmd += [flag, settings[key]]
         if not settings.get("frames_l1", True):
             cmd.append("--no-frames-l1")
         continue_sid = (opts.get("continue_sid") or "").strip()
@@ -240,16 +236,13 @@ class Recorder:
             self.set_state("stopping", "Stopping")
 
     async def send_stop(self):
-        """Same as Ctrl+C in the console. Windows has no SIGINT for child processes,
-        so use the STOP command on stdin there (main.py runs with --control-stdin)."""
-        if IS_WINDOWS:
-            try:
-                self.proc.stdin.write(b"STOP\n")
-                await self.proc.stdin.drain()
-            except (ConnectionError, OSError):
-                pass
-        else:
-            self.proc.send_signal(signal.SIGINT)
+        """Same as Ctrl+C in the console: Windows has no SIGINT for child processes,
+        so send STOP on stdin (main.py runs with --control-stdin)."""
+        try:
+            self.proc.stdin.write(b"STOP\n")
+            await self.proc.stdin.drain()
+        except (ConnectionError, OSError):
+            pass
 
     async def snap(self):
         if not self.active or self.state != "listening":
@@ -1147,23 +1140,15 @@ async def capture_detect_video():
     S._write_json(raw_cfg, cfg)
     images = []
     try:
-        if HELPER.suffix == ".py":
-            # One process for the whole series: starting Python per capture is too slow.
-            await run_cmd(*helper_cmd("--capture-series", str(raw_cfg), str(tmp), "12", "0.5"), timeout=60)
-            images = [cv2.imread(str(f)) for f in sorted(tmp.glob("f*.png"))]
-        else:
-            for i in range(12):
-                out = tmp / f"f{i:02d}.png"
-                rc, _, err = await run_cmd(str(HELPER), "--capture", str(raw_cfg), str(out), timeout=20)
-                if rc == 0 and out.exists():
-                    images.append(cv2.imread(str(out)))
-                await asyncio.sleep(0.4)
+        # One process for the whole series: starting Python per capture is too slow.
+        await run_cmd(*helper_cmd("--capture-series", str(raw_cfg), str(tmp), "12", "0.5"), timeout=60)
+        images = [cv2.imread(str(f)) for f in sorted(tmp.glob("f*.png"))]
     finally:
         for f in tmp.glob("f*.png"):
             f.unlink(missing_ok=True)
     images = [im for im in images if im is not None]
     if len(images) < 4:
-        _err(RuntimeError("Could not capture the screen (check Screen Recording permission on macOS)"))
+        _err(RuntimeError("Could not capture the screen"))
     res = await asyncio.to_thread(video_detect.detect, images)
     if not res:
         _err(ValueError("No video found: nothing was changing. Play the video and try again."))

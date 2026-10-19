@@ -124,7 +124,7 @@ Here is the `provideHttpClient` function implementation because it is an entry p
     <title>HttpClient Implementation Overview</title>
     <style>
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, Roboto, sans-serif;
             line-height: 1.6;
             color: #333;
             max-width: 800px;
@@ -154,7 +154,7 @@ Here is the `provideHttpClient` function implementation because it is an entry p
             color: #d63031;
             padding: 2px 6px;
             border-radius: 4px;
-            font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+            font-family: "Cascadia Mono", Consolas, ui-monospace, monospace;
             font-size: 0.9em;
         }
         .highlight-box {

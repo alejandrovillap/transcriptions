@@ -44,25 +44,24 @@ CONFIGS = {
 
 
 def peak_rss_mb() -> float:
-    if sys.platform == "win32":
-        import ctypes
-        from ctypes import wintypes
+    """Peak working set of this process (Windows)."""
+    import ctypes
+    from ctypes import wintypes
 
-        class PMC(ctypes.Structure):
-            _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
-                        ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
-                        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
-                        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
-                        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
-                        ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
-        pmc = PMC(cb=ctypes.sizeof(PMC))
-        k32 = ctypes.WinDLL("kernel32")
-        k32.GetCurrentProcess.restype = wintypes.HANDLE
-        ctypes.WinDLL("psapi").GetProcessMemoryInfo(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
-        return pmc.PeakWorkingSetSize / (1024 * 1024)
-    import resource
-    rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
-    return rss / (1024 * 1024) if sys.platform == "darwin" else rss / 1024   # macOS: bytes, Linux: KB
+    class PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+    pmc = PMC(cb=ctypes.sizeof(PMC))
+    k32 = ctypes.WinDLL("kernel32")
+    k32.GetCurrentProcess.restype = wintypes.HANDLE
+    get_info = ctypes.WinDLL("psapi").GetProcessMemoryInfo
+    get_info.argtypes = [wintypes.HANDLE, ctypes.POINTER(PMC), wintypes.DWORD]
+    get_info(k32.GetCurrentProcess(), ctypes.byref(pmc), pmc.cb)
+    return pmc.PeakWorkingSetSize / (1024 * 1024)
 
 
 def load_audio(path: str, start: float, dur: float | None) -> np.ndarray:

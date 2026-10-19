@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """screenshot_helper — Windows companion for main.py / server.py.
 
-Drop-in replacement for the macOS screenshot_helper.swift: same modes, same
-stdout protocol, pure Python (ctypes + Pillow + tkinter).
+Pure Python (ctypes + Pillow + tkinter); talks to main.py / server.py through
+stdout lines (SCREENSHOT:, SELECTION:, FRAME:, REGION:, WINDOW:).
 
 Modes:
   screenshot_helper.py <output-dir> [capture-config.json]
@@ -41,7 +41,7 @@ from datetime import datetime
 from pathlib import Path
 
 if sys.platform != "win32":
-    sys.exit("screenshot_helper.py is for Windows; on macOS use the Swift screenshot_helper")
+    sys.exit("screenshot_helper.py runs on Windows only")
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
@@ -386,7 +386,7 @@ def take_frame(out_dir: str, config_path: str | None):
 
 class AutoFrames:
     """Timer thread that takes a frame every *interval* seconds. A tick is skipped
-    while the previous capture is still running, like the macOS helper."""
+    while the previous capture is still running."""
 
     def __init__(self, out_dir: str, config_path: str | None):
         self.out_dir, self.config_path = out_dir, config_path

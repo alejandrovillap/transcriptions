@@ -100,7 +100,7 @@ window.I18N = (() => {
     'Screenshot': 'Captura', 'Selected text': 'Texto seleccionado', 'Delete screenshot': 'Borrar captura',
     'Delete this screenshot?': '¿Borrar esta captura?', 'Screenshot deleted · kept in screenshots/.trash': 'Captura borrada · se guarda en screenshots/.trash',
     'Show in the transcript': 'Ver en la transcripción', 'Loading OCR text…': 'Cargando texto OCR…',
-    'Best': 'Mejores', 'Picked': 'Elegidas', 'Visible frames go to Beautify as screenshots, at their place in the transcript':
+    'Best': 'Mejores', 'Picked': 'Elegidas', 'Pick': 'Elegir', 'Visible frames go to Beautify as screenshots, at their place in the transcript':
       'Las escenas visibles entran en la versión anotada como capturas, en su lugar de la transcripción',
     'Keep the N frames with the most said about them (pointing phrases, time on screen) and hide the rest. The eye brings any frame back.':
       'Conserva las N escenas de las que más se habló (frases como "como pueden ver", tiempo en pantalla) y oculta el resto. El ojo recupera cualquiera.',

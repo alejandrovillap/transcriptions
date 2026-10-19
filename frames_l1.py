@@ -72,7 +72,7 @@ class ClipFilter(FrameFilter):
             t0 = time.time()
             self.torch = torch
             if self.device is None:
-                self.device = "mps" if torch.backends.mps.is_available() else "cpu"
+                self.device = "cuda" if torch.cuda.is_available() else "cpu"
             # Cache first: the Hub's freshness checks can stall for minutes on some networks.
             try:
                 model = CLIPModel.from_pretrained(self.model_name, local_files_only=True)
