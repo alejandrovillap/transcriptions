@@ -40,6 +40,8 @@ SERVER_INFO = S.WEBUI_DIR / "server.json"
 LOG_PATH = S.WEBUI_DIR / "call_watcher.log"
 MIC_KEY = r"Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone"
 STARTUP_LNK = Path(os.environ.get("APPDATA", "")) / r"Microsoft\Windows\Start Menu\Programs\Startup\voice-rec call watcher.lnk"
+STATE_PATH = S.WEBUI_DIR / "call_watcher_state.json"
+WATCHDOG_TASK = "voice-rec call watcher"     # Task Scheduler: relaunch every 5 min if it was closed
 CREATE_NO_WINDOW = 0x08000000
 
 DEFAULT_CONFIG = {
@@ -280,9 +282,36 @@ class Watcher:
         self.seen_since = None      # mic taken since (debounce start)
         self.free_since = None      # mic released since (debounce end)
         self.call_started = 0.0
-        self.ours: tuple[str, str] | None = None   # (project, sid) of the recording we started
+        # (project, sid) of the recording we started; kept on disk so a restarted watcher
+        # (crash, Windows closing it) can still stop it when the call ends
+        state = S._read_json(STATE_PATH, {})
+        self._ours = tuple(state["ours"]) if state.get("ours") else None
         self.state_text = "Esperando llamadas"
         self.tray = None
+        # The registry is polled on its own thread, so the Tk thread (which owns windows
+        # Windows talks to) never waits on it.
+        self.latest_apps: list[str] = []
+        threading.Thread(target=self._poll_mic, daemon=True, name="mic-poll").start()
+
+    @property
+    def ours(self):
+        return self._ours
+
+    @ours.setter
+    def ours(self, value):
+        self._ours = tuple(value) if value else None
+        try:
+            S._write_json(STATE_PATH, {"ours": list(self._ours) if self._ours else None})
+        except Exception:
+            log.exception("could not save the watcher state")
+
+    def _poll_mic(self):
+        while True:
+            try:
+                self.latest_apps = call_apps_using_mic(load_config()["apps"], self.test_file)
+            except Exception:
+                log.exception("microphone check failed")
+            time.sleep(1)
 
     # -- helpers --
     def on_ui(self, fn):
@@ -305,18 +334,25 @@ class Watcher:
 
     # -- main loop (Tk thread) --
     def tick(self):
-        while True:
-            try:
-                self.ui.get_nowait()()
-            except queue.Empty:
-                break
         try:
+            while True:
+                try:
+                    fn = self.ui.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    fn()
+                except Exception:   # a failing popup must never stop the watcher
+                    log.exception("UI action failed")
             self.cfg = load_config()
-            apps = call_apps_using_mic(self.cfg["apps"], self.test_file)
-            self.step(apps)
+            self.step(list(self.latest_apps))
         except Exception:
             log.exception("tick failed")
-        self.root.after(1000, self.tick)
+        finally:
+            self.root.after(1000, self.tick)
+        if time.time() - getattr(self, "_last_alive", 0) > 3600:
+            self._last_alive = time.time()
+            log.info("alive (%s)", self.state_text)
 
     def step(self, apps: list[str]):
         now = time.time()
@@ -346,9 +382,30 @@ class Watcher:
         self.set_state(f"Llamada en {self.call_label}")
         if mode == "off":
             return
+        if self.ours:
+            # Saved at start-up: we may have been restarted during a call we were recording.
+            self.bg(self._adopt_or_ask)
+            return
         if mode == "auto":
             self.bg(self.start_recording, True)
             return
+        self.ask_to_record()
+
+    def _adopt_or_ask(self):
+        """Resume our saved recording if it is still running; otherwise forget it and
+        handle the call normally (ask, or record if the mode is automatic)."""
+        rec = self.server.recorder() if self.server.alive() else {}
+        if rec.get("active") and (rec.get("project"), rec.get("sid")) == self.ours:
+            log.info("resuming our recording %s / %s after a restart", *self.ours)
+            self.set_state(f"Grabando {self.call_label} → {self.ours[0]}", recording=True)
+            return
+        self.ours = None
+        if self.cfg["mode"] == "auto":
+            self.start_recording(True)
+        else:
+            self.on_ui(self.ask_to_record)
+
+    def ask_to_record(self):
         self.popups.show(
             f"Llamada detectada en {self.call_label}",
             "¿Grabar y transcribir esta llamada? Avisa a los demás participantes de que se está grabando.",
@@ -549,6 +606,8 @@ class Tray:
                        enabled=lambda item: self.recording),
             p.MenuItem("Iniciar con Windows", lambda icon, item: toggle_autostart(),
                        checked=lambda item: STARTUP_LNK.exists()),
+            p.MenuItem("Reabrir si se cierra (cada 5 min)", lambda icon, item: self.w.bg(toggle_watchdog),
+                       checked=lambda item: watchdog_installed()),
             p.Menu.SEPARATOR,
             p.MenuItem("Salir", lambda icon, item: self.on_quit()),
         )
@@ -586,6 +645,52 @@ def toggle_autostart() -> bool:
     return True
 
 
+def _pythonw() -> Path:
+    p = ROOT / ".venv" / "Scripts" / "pythonw.exe"
+    return p if p.exists() else Path(sys.executable.replace("python.exe", "pythonw.exe"))
+
+
+def watchdog_installed() -> bool:
+    r = subprocess.run(["schtasks", "/Query", "/TN", WATCHDOG_TASK], capture_output=True,
+                       creationflags=CREATE_NO_WINDOW)
+    return r.returncode == 0
+
+
+def toggle_watchdog() -> bool:
+    """A Task Scheduler task that starts the watcher at logon and every 5 minutes. If the
+    watcher is running, the new copy exits at once (single instance); if Windows closed it
+    (e.g. after a hang), it is back within 5 minutes."""
+    if watchdog_installed():
+        subprocess.run(["schtasks", "/Delete", "/TN", WATCHDOG_TASK, "/F"], check=True,
+                       capture_output=True, creationflags=CREATE_NO_WINDOW)
+        log.info("watchdog off")
+        return False
+    ps = ("$a = New-ScheduledTaskAction -Execute $env:TARGET -Argument $env:ARGS -WorkingDirectory $env:WD; "
+          "$t1 = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME; "
+          "$t2 = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1) "
+          "-RepetitionInterval (New-TimeSpan -Minutes 5); "
+          "$s = New-ScheduledTaskSettingsSet -MultipleInstances IgnoreNew -ExecutionTimeLimit (New-TimeSpan -Seconds 0) "
+          "-AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable; "
+          "Register-ScheduledTask -TaskName $env:TASK -Action $a -Trigger $t1,$t2 -Settings $s "
+          "-Description 'Reopens the voice-rec call watcher if it was closed' | Out-Null")
+    subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", ps], check=True,
+                   capture_output=True, creationflags=CREATE_NO_WINDOW,
+                   env={**os.environ, "TASK": WATCHDOG_TASK, "TARGET": str(_pythonw()),
+                        "ARGS": f'"{ROOT / "call_watcher.py"}"', "WD": str(ROOT)})
+    log.info("watchdog on: task '%s'", WATCHDOG_TASK)
+    return True
+
+
+def install_crash_logging(root=None):
+    """Write any uncaught error (main thread, other threads, Tk callbacks) to the log;
+    pythonw has no console, so otherwise they vanish."""
+    sys.excepthook = lambda t, v, tb: log.critical("uncaught error", exc_info=(t, v, tb))
+    threading.excepthook = lambda a: log.critical("uncaught error in thread %s", a.thread and a.thread.name,
+                                                  exc_info=(a.exc_type, a.exc_value, a.exc_traceback))
+    if root is not None:
+        root.report_callback_exception = lambda t, v, tb: log.error("Tk callback error", exc_info=(t, v, tb))
+
+
 # ── Entry point ──────────────────────────────────────────────────────────────
 
 def single_instance() -> bool:
@@ -597,6 +702,8 @@ def main():
     ap = argparse.ArgumentParser(description="Record calls automatically (Windows)")
     ap.add_argument("--status", action="store_true", help="Print the call apps using the microphone and exit")
     ap.add_argument("--autostart", choices=["on", "off"], help="Start (or not) with Windows, then exit")
+    ap.add_argument("--watchdog", choices=["on", "off"],
+                    help="Reopen the watcher every 5 min if it was closed (Task Scheduler), then exit")
     ap.add_argument("--test-mic-file", type=Path, default=None, help=argparse.SUPPRESS)
     ap.add_argument("--no-tray", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
@@ -613,13 +720,18 @@ def main():
             toggle_autostart()
         print(f"Start with Windows: {'on' if STARTUP_LNK.exists() else 'off'}")
         return
+    if args.watchdog:
+        if watchdog_installed() != (args.watchdog == "on"):
+            toggle_watchdog()
+        print(f"Reopen if closed: {'on' if watchdog_installed() else 'off'}")
+        return
 
     S.WEBUI_DIR.mkdir(exist_ok=True)
+    if not single_instance():
+        return   # already running (the watchdog task tries every 5 min): exit quietly
     logging.basicConfig(filename=LOG_PATH, level=logging.INFO, encoding="utf-8",
                         format="%(asctime)s %(levelname)s %(message)s")
-    if not single_instance():
-        log.info("already running; exiting")
-        return
+    install_crash_logging()
     if not CONFIG_PATH.exists():
         save_config(load_config())
 
@@ -630,6 +742,7 @@ def main():
     import tkinter as tk
     root = tk.Tk()
     root.withdraw()
+    install_crash_logging(root)
     watcher = Watcher(root, args.test_mic_file)
 
     def quit_all():

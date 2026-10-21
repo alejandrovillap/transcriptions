@@ -71,7 +71,13 @@ Desde el menú del icono (clic derecho) se configura:
 - **Al empezar una llamada:** preguntar (por defecto), grabar automáticamente o no hacer nada.
 - **Al terminar la llamada:** preguntar, final + minuta, solo final o nada.
 - **Iniciar con Windows:** añade el vigilante al inicio de sesión.
+- **Reabrir si se cierra (cada 5 min):** una tarea programada de Windows lo vuelve a abrir si se
+  cerró (por ejemplo, si Windows lo cerró por no responder). Si ya está abierto, no hace nada.
+  También: `.venv\Scripts\python call_watcher.py --watchdog on|off`.
 - También: abrir la interfaz, detener la grabación y salir.
+
+Si el vigilante se reabre en medio de una llamada que estaba grabando, retoma esa grabación y la
+detiene al colgar. Los errores inesperados quedan en `.webui\call_watcher.log`.
 
 El icono se pone **rojo** mientras graba. Las grabaciones van al último proyecto usado en la
 interfaz; para fijar uno, pon `"project": "nombre"` en `.webui\call_watcher.json`. En ese mismo
