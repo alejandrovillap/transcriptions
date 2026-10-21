@@ -123,6 +123,9 @@ window.I18N = (() => {
     'Chat model': 'Modelo del chat', 'Claude Code (recommended)': 'Claude Code (recomendado)',
     'Gemini / OpenAI API (single pass, no tools)': 'API de Gemini / OpenAI (una pasada, sin herramientas)',
     'Offer to build the final version when recording stops': 'Ofrecer la versión final al detener la grabación',
+    'Meetings vault': 'Vault de reuniones',
+    'Private folder where every finished minute is archived as a Markdown note, with a glossary per project. Leave it empty to turn it off.':
+      'Carpeta privada donde cada minuta terminada se archiva como nota Markdown, con un glosario por proyecto. Déjala vacía para desactivarlo.',
     'Recognizer': 'Reconocedor', 'Python': 'Python', 'Same as the server': 'El mismo que el servidor', 'Check': 'Comprobar',
     'The interpreter that has faster-whisper, torch and easyocr installed.': 'El intérprete que tiene faster-whisper, torch y easyocr instalados.',
     'Microphone': 'Micrófono', 'Windows default microphone': 'Micrófono predeterminado de Windows',

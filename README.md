@@ -177,6 +177,34 @@ Cada punto cita el minuto `[HH:MM:SS]` en que se dijo.
   `projects\<proyecto>\docs\`.
 - Desde consola: `.venv\Scripts\python minutes.py <proyecto> latest`.
 
+## Vault de reuniones (memoria)
+
+Una carpeta **privada** donde la app va guardando lo que se habló, para que cada reunión nueva se lea
+contra las anteriores. Se activa en ⚙ Configuración → *IA* → **Vault de reuniones** (por ejemplo
+`C:\Users\<tú>\meetings-vault`); vacío = desactivado.
+
+```
+meetings-vault\
+  _index.md                      todos los proyectos, últimas reuniones primero
+  <proyecto>\
+    _index.md                    reuniones del proyecto: decisiones y acuerdos abiertos
+    Glosario.md                  términos y correcciones (lo editas tú)
+    Reuniones\2026-10-19_1713_<título>.md
+```
+
+- **Cada minuta terminada se archiva** como nota Markdown con frontmatter YAML (fecha, asistentes,
+  decisiones, acuerdos con responsable, fecha y estado). La conversión desde el HTML es directa, sin
+  otra llamada a la IA. Una minuta nueva de la misma sesión reemplaza la nota anterior.
+- El vault es un repositorio **git local** (sin remoto): cada minuta queda en un commit. Contiene
+  datos de clientes; no lo subas a un repositorio público.
+- **Glosario** (`Glosario.md`, se crea solo): líneas `- Término` o `- Término — qué es`, y
+  correcciones `- "se oyó" → "debe ser"`. El reconocimiento lo lee en cada grabación (Whisper los
+  usa como pistas; con Parakeet se aplican las correcciones al texto), y la versión anotada y la
+  minuta lo toman como la forma correcta de escribir nombres y siglas.
+- Si el proyecto no tiene **carpeta de conocimiento** propia, *Anotar*, *Minuta* y *Preguntar*
+  trabajan en la carpeta del proyecto dentro del vault: pueden leer las reuniones anteriores y citarlas
+  en los avisos NEW / CONFIRMS / UPDATES.
+
 ## Escenas automáticas
 
 En vez de pulsar `Ctrl+Shift+S`, la pantalla se captura cada segundo y solo se guardan los momentos
@@ -235,6 +263,7 @@ Las escenas se guardan en `projects\<proyecto>\frames\<sesión>\`.
 | `call_watcher.py` | Detección de llamadas e icono junto al reloj |
 | `beautify.py` | Versión anotada con Claude Code |
 | `minutes.py`, `minutes_api.py` | Minutas |
+| `vault.py` | Vault de reuniones: archivar minutas, índices, glosario |
 | `autoframes.py`, `frames_l1.py`, `video_detect.py`, `select_frames.py`, `similar.py` | Escenas automáticas |
 | `speaker_id.py`, `rediarize.py` | Diarización y re-diarización |
 | `web/` | Interfaz (HTML/CSS/JS sin compilación; `i18n.js` traduce al español) |

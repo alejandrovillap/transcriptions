@@ -1486,6 +1486,8 @@ async function openSettings() {
         <div class="frow"><label>Beautify model</label><select class="field" id="setBModel">${modelOpts(s.beautify_model)}</select></div>
         <div class="frow"><label>Chat model</label><select class="field" id="setCModel">${modelOpts(s.chat_model)}</select></div>
         <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Offer to build the final version when recording stops</label></div>
+        <div class="frow"><label>Meetings vault</label><input class="field" id="setVault" value="${esc(s.vault_dir || '')}" placeholder="C:\\Users\\you\\meetings-vault">
+          <div class="help">Private folder where every finished minute is archived as a Markdown note, with a glossary per project. Leave it empty to turn it off.</div></div>
       </fieldset>
       <fieldset class="fset"><legend>Recognizer</legend>
         <div class="frow"><label>Python</label><div style="display:flex;gap:8px"><input class="field" id="setPy" value="${esc(s.recorder_python)}" placeholder="Same as the server"><button class="ghost-btn small" id="checkPy" style="height:30px">Check</button></div>
@@ -1523,7 +1525,7 @@ async function openSettings() {
         st.settings = await api('POST', '/api/settings', {
           beautify_engine: $('#setEngine').value, beautify_model: $('#setBModel').value, chat_model: $('#setCModel').value,
           auto_final_beautify: $('#setAuto').checked, recorder_python: $('#setPy').value.trim(),
-          frames_l1: $('#setL1').checked,
+          frames_l1: $('#setL1').checked, vault_dir: $('#setVault').value.trim(),
           mic_device: $('#setMic').value, output_device: $('#setOut').value,
         });
         if (st.project) await api('POST', `/api/projects/${encodeURIComponent(st.project)}/settings`, {

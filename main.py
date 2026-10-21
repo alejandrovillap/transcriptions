@@ -153,57 +153,69 @@ def pick_language(info, fallback):
 
 # ── Vocabulary hints (--vocab-file) ────────────────────────────────────────
 VOCAB_RE = re.compile(r'^\s*[-*]\s*"(.+?)"\s*(?:→|->)\s*"(.+?)"')
+TERM_RE = re.compile(r'^\s*[-*]\s+(?!")(.+?)\s*$')    # glossary: "- Term" or "- Term — what it is"
 MAX_HOTWORDS_CHARS = 400
-vocab_path: Path | None = None
-_vocab_cache = {"mtime": None, "hotwords": None}
+vocab_path: Path | None = None       # project notes: '"heard" → "meant"' corrections
+glossary_path: Path | None = None    # meetings vault glossary: terms and corrections (--glossary-file)
+_vocab_cache = {"key": None, "hotwords": None, "rules": []}
+
+
+def _load_vocab():
+    """Read the notes and the glossary again whenever one of them changes. Correct spellings
+    (glossary terms first, then the "meant" side of corrections) become Whisper hotwords;
+    corrections become replace rules for engines without hotwords (--vocab-correct)."""
+    files = [p for p in (vocab_path, glossary_path) if p is not None]
+    key = []
+    for p in files:
+        try:
+            key.append((str(p), p.stat().st_mtime))
+        except OSError:
+            key.append((str(p), None))
+    key = tuple(key)
+    if key == _vocab_cache["key"]:
+        return
+    terms, meant_terms, rules = [], [], []
+    for p, (_, mtime) in zip(files, key):
+        if mtime is None:
+            continue
+        for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+            m = VOCAB_RE.match(line)
+            if m:
+                heard, meant = m.group(1).strip(), m.group(2).strip()
+                if meant and meant not in meant_terms:
+                    meant_terms.append(meant)
+                if heard and heard != meant:
+                    rules.append((re.compile(r"(?<!\w)" + re.escape(heard) + r"(?!\w)", re.IGNORECASE), meant))
+            elif p == glossary_path and (t := TERM_RE.match(line)) and not t.group(1).startswith("<!--"):
+                term = re.split(r"\s+[—–-]\s+|:\s", t.group(1), maxsplit=1)[0].strip()
+                if term and term not in terms:
+                    terms.append(term)
+    all_terms = terms + [t for t in meant_terms if t not in terms]
+    hw = ", ".join(all_terms)
+    if len(hw) > MAX_HOTWORDS_CHARS:   # cut at a term boundary, never in the middle of a term
+        hw = hw[:MAX_HOTWORDS_CHARS].rsplit(",", 1)[0]
+    changed = _vocab_cache["key"] is not None or all_terms or rules
+    _vocab_cache.update(key=key, hotwords=hw or None, rules=rules)
+    if changed:
+        sys.stdout.write(f"\r\033[K[vocab] {len(all_terms)} term(s), {len(rules)} correction(s) loaded\n")
+        sys.stdout.flush()
 
 
 def current_hotwords() -> str | None:
-    """Correct spellings from '- "heard" → "meant"' lines in the vocab file,
-    re-read whenever the file changes. Passed to Whisper as hotwords."""
-    if vocab_path is None:
-        return None
-    try:
-        mtime = vocab_path.stat().st_mtime
-    except OSError:
-        return None
-    if mtime != _vocab_cache["mtime"]:
-        terms = []
-        for line in vocab_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            m = VOCAB_RE.match(line)
-            if m and m.group(2) not in terms:
-                terms.append(m.group(2))
-        hw = ", ".join(terms)[:MAX_HOTWORDS_CHARS].rsplit(",", 1)[0] if terms else ""
-        _vocab_cache.update(mtime=mtime, hotwords=hw or None)
-        if hw:
-            sys.stdout.write(f"\r\033[K[vocab] {len(terms)} hint(s) loaded\n")
-            sys.stdout.flush()
+    """Correct spellings from the notes and the glossary, passed to Whisper as hotwords."""
+    _load_vocab()
     return _vocab_cache["hotwords"]
 
 
 # ── Vocabulary corrections (--vocab-correct) ─────────────────────────────────
 # For engines without hotwords: replace '"heard" → "meant"' phrases in the output.
 vocab_correct = False
-_corr_cache = {"mtime": None, "rules": []}
 
 
 def current_corrections() -> list:
-    """[(compiled regex, replacement)] from the vocab file, re-read on change."""
-    if vocab_path is None:
-        return []
-    try:
-        mtime = vocab_path.stat().st_mtime
-    except OSError:
-        return []
-    if mtime != _corr_cache["mtime"]:
-        rules = []
-        for line in vocab_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            m = VOCAB_RE.match(line)
-            if m and m.group(1).strip() and m.group(1) != m.group(2):
-                rules.append((re.compile(r"(?<!\w)" + re.escape(m.group(1).strip()) + r"(?!\w)",
-                                         re.IGNORECASE), m.group(2)))
-        _corr_cache.update(mtime=mtime, rules=rules)
-    return _corr_cache["rules"]
+    """[(compiled regex, replacement)] from the notes and the glossary, re-read on change."""
+    _load_vocab()
+    return _vocab_cache["rules"]
 
 
 def apply_corrections(text: str) -> str:
@@ -312,7 +324,7 @@ def transcription_worker(asr_engine, output_file, session_data, enable_diarizati
                     hotwords=current_hotwords() if asr_engine.supports_hotwords else None,
                 )
 
-            correct = vocab_correct and vocab_path is not None
+            correct = vocab_correct and (vocab_path is not None or glossary_path is not None)
             if auto and asr_engine.name == "whisper":
                 segments = run(None)
                 info = asr_engine.last_info
@@ -867,6 +879,9 @@ def main():
     parser.add_argument("--vocab-file", default=None,
                         help='Notes file with \'- "heard" → "meant"\' lines; the correct terms are '
                              "passed to Whisper as hints (re-read on change)")
+    parser.add_argument("--glossary-file", default=None,
+                        help='Project glossary (meetings vault): "- Term" lines and \'- "heard" → "meant"\' '
+                             "corrections, used like --vocab-file (re-read on change)")
     parser.add_argument("--engine", choices=ENGINES, default="whisper",
                         help="Speech recognition engine: whisper (default, en/es detection per phrase, hotwords), "
                              "parakeet (Parakeet TDT v3, much faster on CPU, detects the language itself); "
@@ -897,9 +912,11 @@ def main():
         parser.error(f"--lang must be auto, en or es (got {args.lang})")
     if args.events:
         events.open(args.events)
-    global vocab_path
+    global vocab_path, glossary_path
     if args.vocab_file:
         vocab_path = Path(args.vocab_file)
+    if args.glossary_file:
+        glossary_path = Path(args.glossary_file)
     SILENCE_DURATION_MS = int(args.pause * 1000)
     global vocab_correct
     vocab_correct = args.vocab_correct
@@ -968,7 +985,7 @@ def main():
                 diarization=enable_diarization, continued=prefix_text is not None)
 
     asr_engine, vad_model = load_models(args.engine, args.asr_model)
-    if args.vocab_file and not asr_engine.supports_hotwords and not args.vocab_correct:
+    if (args.vocab_file or args.glossary_file) and not asr_engine.supports_hotwords and not args.vocab_correct:
         print(f"[vocab] {args.engine} has no hotwords; vocab hints are ignored (add --vocab-correct "
               "to apply the notes' corrections to the output)")
 

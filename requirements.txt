@@ -23,3 +23,5 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 # engine benchmark (bench_asr.py --ref)
 jiwer>=3.0
+# meetings vault (vault.py): note frontmatter
+pyyaml>=6.0

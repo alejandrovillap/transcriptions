@@ -29,6 +29,7 @@ from sessions import (
     parse_transcript, project_dir, save_manifest, session_dir, shot_time,
     sid_datetime, transcript_path,
 )
+import vault
 
 DEFAULT_STYLE = ROOT / "templates" / "annotated_transcript_style.html"
 TIME_RE = re.compile(r'class="time"[^>]*>(\d{2}:\d{2}:\d{2})')
@@ -142,8 +143,18 @@ def prepare(project: str, sid: str, mode: str = "update", live: bool = False) ->
                       "  Use it only for consistency (speaker names, section names, callouts). "
                       "The transcript is the source of truth.\n")
 
-    context_dir = psettings["context_dir"].strip()
-    if context_dir:
+    context_dir = vault.context_dir(project, psettings)
+    vdir = vault.project_dir(project)
+    if not psettings["context_dir"].strip() and vdir is not None:
+        context_block = (
+            f"- Project memory (private meetings vault): {vdir}\n"
+            f"  Earlier meetings of this project are Markdown notes in {vdir / vault.MEETINGS_DIR} (YAML frontmatter with "
+            "attendees, decisions and action items, then the minutes). Use Grep / Glob / Read there to check what is "
+            "said against what was already discussed or decided.\n")
+        callout_source = ("Back up every NEW / CONFIRMS / UPDATES classification with the earlier meeting notes in "
+                          "the vault, and name the meeting and date in the \"Prior view\" line. If there are no "
+                          "earlier notes, use NEW for new facts and decisions. Never invent prior knowledge.")
+    elif context_dir:
         context_block = (
             f"- Project knowledge base: {context_dir}\n"
             "  If the claude-context MCP server is available, search it (search_code with this path) to check "
@@ -177,7 +188,7 @@ def prepare(project: str, sid: str, mode: str = "update", live: bool = False) ->
     prompt = PROMPT.format(
         mode_title=mode_title, input=snapshot, n_lines=len(timed), t_first=t_first, t_last=t_last,
         live_note=live_note, shots=_fmt_shots(shots, sdir), style=style, prev_block=prev_block,
-        context_block=context_block, notes_block=notes_block, docs_block=docs_block,
+        context_block=context_block, notes_block=notes_block + vault.glossary_block(project), docs_block=docs_block,
         callout_source=callout_source, v=v, now=datetime.now().strftime("%Y-%m-%d %H:%M"),
         out=out, write_rule=write_rule,
     )

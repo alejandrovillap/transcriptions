@@ -24,6 +24,7 @@ from pathlib import Path
 
 import claude_cli
 import sessions as S
+import vault
 
 TEMPLATE = S.ROOT / "templates" / "minutes_template.html"
 
@@ -145,7 +146,8 @@ def prepare(project: str, sid: str) -> dict:
     out = mdir / f"m{v}.html"
     prompt = PROMPT.format(
         source_desc=source_desc, source=source, transcript_block=transcript_block, shots=shots_txt,
-        template=TEMPLATE, notes_block=notes_block, prev_block=prev_block, sid=sid, n_lines=n_lines,
+        template=TEMPLATE, notes_block=notes_block + vault.glossary_block(project), prev_block=prev_block,
+        sid=sid, n_lines=n_lines,
         t_first=t_first, t_last=t_last, source_short=source_short, v=v,
         now=datetime.now().strftime("%Y-%m-%d %H:%M"), out=out,
     )
@@ -155,7 +157,7 @@ def prepare(project: str, sid: str) -> dict:
     manifest["versions"].append(record)
     save_manifest(project, sid, manifest)
 
-    context_dir = psettings["context_dir"].strip()
+    context_dir = vault.context_dir(project, psettings)
     cwd = Path(context_dir).expanduser() if context_dir and Path(context_dir).expanduser().is_dir() else S.ROOT
     return {"project": project, "sid": sid, "v": v, "out": out, "prompt": prompt, "cwd": cwd,
             "settings": settings, "source": source_short, "lines": n_lines,
@@ -216,6 +218,12 @@ def finish(project: str, sid: str, v: int, status: str, **info) -> dict:
             target = docs / f"{dt.strftime('%Y-%m-%d') if dt else sid}-{_slug(rec.get('title', ''))}-minutes.html"
             target.write_text(html, encoding="utf-8")
             rec["docs_copy"] = str(target)
+            try:
+                note = vault.archive_minutes(project, sid, rec, html)
+                if note:
+                    rec["vault_note"] = str(note)
+            except Exception as e:   # the minutes themselves are fine: report, don't fail them
+                rec["vault_error"] = f"{type(e).__name__}: {e}"[:300]
     save_manifest(project, sid, manifest)
     return rec
 

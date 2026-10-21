@@ -40,6 +40,7 @@ DEFAULT_SETTINGS = {
     "auto_frames": False,             # automatic screen frames (autoframes.py) from the start
     "frames_l1": True,                # auto frames Level 1 (frames_l1.py, CLIP); off = Level 0 only
     "recorder_python": "",            # empty = same interpreter as server.py
+    "vault_dir": "",                  # private meetings vault (vault.py); empty = off
     "last_project": "",
 }
 

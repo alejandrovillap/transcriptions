@@ -37,6 +37,7 @@ import audio_api     # Windows build: audio device list (audio_sources.py)
 import claude_cli
 import select_frames as SF
 import sessions as S
+import vault         # private meetings vault: archived minutes, glossary
 
 ENGINES = ("whisper", "gigaam", "parakeet")   # main.py --engine (see asr_engines.py)
 
@@ -177,13 +178,17 @@ class Recorder:
                "--events", str(events_path), "--control-stdin", "--capture-config", str(CAPTURE_CONFIG),
                "--lang", str(opts.get("lang") or "auto"), "--pause", str(float(opts.get("pause") or 1.5)),
                "--vocab-file", str(S.notes_path(project).resolve())]
+        glossary = vault.glossary_path(project)   # meetings vault: terms and corrections (idea F)
+        if glossary is not None:
+            cmd += ["--glossary-file", str(glossary.resolve())]
         engine = str(opts.get("engine") or "whisper")
         if engine not in ENGINES:
             raise HTTPException(400, f"Unknown engine: {engine}")
         if engine == "gigaam":
             raise HTTPException(400, "GigaAM recognizes Russian only; use Whisper or Parakeet")
         if engine != "whisper":
-            cmd += ["--engine", engine]
+            # no hotwords: apply the notes' and glossary's "heard" → "meant" corrections to the text
+            cmd += ["--engine", engine, "--vocab-correct"]
         self.engine = engine
         speakers = str(opts.get("speakers") or "off")
         if speakers != "off":
@@ -614,7 +619,9 @@ of a meeting or walkthrough, which may still be recording. Answer concisely in t
 using Markdown. Cite moments with their [HH:MM:SS] timestamps. The transcript is raw speech-to-text, so expect \
 recognition errors and interpret sensibly. Lines like [screenshot: path] point to screen captures you can view \
 with the Read tool when relevant. If a project knowledge base (claude-context MCP) is available, use it when the \
-question needs background. Never modify files."""
+question needs background. When the working folder is the project's meetings vault, its Reuniones/ folder holds \
+the earlier meetings as Markdown notes (decisions, action items, owners): search them with Grep / Glob / Read when \
+the question is about earlier meetings, and name the meeting and date you took each fact from. Never modify files."""
 
 
 class ChatManager:
@@ -681,7 +688,8 @@ class ChatManager:
         msg = next(m for m in data["messages"] if m["id"] == msg_id)
         settings = S.load_settings()
         psettings = S.load_project_settings(project)
-        ctx = Path(psettings["context_dir"]).expanduser() if psettings["context_dir"] else ROOT
+        ctx_dir = vault.context_dir(project, psettings)
+        ctx = Path(ctx_dir).expanduser() if ctx_dir else ROOT
         cwd = ctx if ctx.is_dir() else ROOT
 
         def push(**kw):
