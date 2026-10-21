@@ -168,6 +168,7 @@ window.I18N = (() => {
   const P = [
     [/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})( · \d{2}:\d{2})?$/, (m, a, d, t) => `${d} ${MON[a]}${t || ''}`],
     [/^(\d+) min ago$/, (m, n) => `hace ${n} min`],
+    [/^Live · (.*)$/, (m, d) => `En vivo · ${tr(d)}`],
     [/^of (\d{2}:\d{2}:\d{2}–\d{2}:\d{2}:\d{2})$/, (m, r) => `de ${r}`],
     [/^Answers come from the (live|saved) transcript( and its screenshots)?\.$/, (m, k, sh) => `Las respuestas salen de la transcripción ${k === 'live' ? 'en vivo' : 'guardada'}${sh ? ' y sus capturas' : ''}.`],
     [/^(.*) detects the language by itself$/, (m, e) => `${tr(e)} detecta el idioma por sí solo`],
