@@ -33,8 +33,8 @@ Parakeet (~640 MB), Silero VAD y EasyOCR; Whisper (~1.6 GB) solo si lo eliges.
 webui.bat
 ```
 
-Abre http://127.0.0.1:8765, o el siguiente puerto libre si Windows tiene reservado el 8765
-(la consola muestra la dirección real). En PowerShell, desde la carpeta, escribe `.\webui.bat`.
+Abre **http://127.0.0.1:8766** (guárdalo en favoritos). Solo si ese puerto estuviera ocupado usa el
+siguiente libre; la dirección real siempre está en `.webui\server.json` y en la consola. En PowerShell, desde la carpeta, escribe `.\webui.bat`.
 Elige el idioma, el área de captura (pantalla completa, un área o una ventana; la ventana se
 captura aunque esté tapada por otras) y pulsa **Grabar**. El resto de ajustes está en **▸ Opciones**.
 La interfaz está en español; el botón **ES** junto al tema la cambia a inglés.

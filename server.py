@@ -6,7 +6,7 @@ UI: live transcript, screenshots with statuses, capture-area selection,
 Beautify (annotated full transcript via Claude Code) and a chat about the
 transcript that works while recording continues.
 
-    python server.py            # http://127.0.0.1:8765 (opens the browser)
+    python server.py            # http://127.0.0.1:8766 (opens the browser)
     python server.py --port 9000 --no-browser
 """
 
@@ -1217,7 +1217,7 @@ def free_port(host: str, port: int, tries: int = 50) -> int:
 def main():
     ap = argparse.ArgumentParser(description="voice-rec web UI")
     ap.add_argument("--host", default="127.0.0.1")
-    ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--port", type=int, default=8766)   # 8765 is reserved by Windows on many machines
     ap.add_argument("--no-browser", action="store_true")
     args = ap.parse_args()
     import uvicorn
