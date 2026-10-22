@@ -62,8 +62,10 @@ registrados, se indica en el log.
 `callwatch.bat` deja un **icono junto al reloj** que vigila el micrófono. Cuando Teams, Zoom,
 Webex, Slack, Meet en el navegador u otra app de llamadas toma el micrófono:
 
-1. **Al empezar la llamada**, aparece un aviso abajo a la derecha, "Llamada detectada en Teams —
-   ¿Grabar?". Si no respondes en 45 s, no graba. El servidor web se arranca solo, sin ventana.
+1. **Al empezar la llamada**, aparece un aviso con sonido abajo a la derecha **del monitor donde
+   está el ratón**: "Llamada detectada en Teams — ¿Grabar?". Si no respondes en 2 minutos, no
+   graba, pero mientras dure la llamada puedes empezar con clic derecho en el icono →
+   **Grabar esta llamada**.
 2. **Al terminar** (la app suelta el micrófono durante 15 s), detiene la grabación y pregunta si
    quieres **versión final + minuta**, **solo la final** o **nada**. Cuando están listas, te avisa.
 
@@ -77,7 +79,9 @@ Desde el menú del icono (clic derecho) se configura:
 - También: abrir la interfaz, detener la grabación y salir.
 
 Si el vigilante se reabre en medio de una llamada que estaba grabando, retoma esa grabación y la
-detiene al colgar. Los errores inesperados quedan en `.webui\call_watcher.log`.
+detiene al colgar. Además mantiene **siempre encendido el servidor web**: si deja de responder, lo
+arranca de nuevo, así http://127.0.0.1:8766 siempre contesta. Los errores inesperados quedan en
+`.webui\call_watcher.log`.
 
 El icono se pone **rojo** mientras graba. Las grabaciones van al último proyecto usado en la
 interfaz; para fijar uno, pon `"project": "nombre"` en `.webui\call_watcher.json`. En ese mismo

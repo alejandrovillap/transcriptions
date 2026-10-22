@@ -50,7 +50,7 @@ DEFAULT_CONFIG = {
     "project": "",              # empty = the project last used in the UI (else "llamadas")
     "start_after_sec": 3,       # the mic must stay taken this long before it counts as a call
     "stop_after_sec": 15,       # …and released this long before the call counts as ended
-    "prompt_timeout_sec": 45,   # unanswered "Record?" prompt = don't record
+    "prompt_timeout_sec": 120,  # unanswered "Record?" prompt = don't record (the tray can still start it)
     # registry key name (lower-case) contains → label shown to the user
     "apps": {
         "msteams": "Teams", "ms-teams": "Teams", "teams.exe": "Teams",
@@ -70,6 +70,8 @@ log = logging.getLogger("call_watcher")
 def load_config() -> dict:
     cfg = S._read_json(CONFIG_PATH, DEFAULT_CONFIG)
     cfg["apps"] = {**DEFAULT_CONFIG["apps"], **(cfg.get("apps") or {})}
+    if cfg.get("prompt_timeout_sec") == 45:   # the old default was too short to notice the prompt
+        cfg["prompt_timeout_sec"] = DEFAULT_CONFIG["prompt_timeout_sec"]
     return cfg
 
 
@@ -162,8 +164,14 @@ class Server:
         except Exception:
             return False
 
+    _start_lock = threading.Lock()   # one start at a time (recording vs. keep-alive check)
+
     def ensure(self, wait=90) -> bool:
         """Start server.py in the background (no window) if it isn't running."""
+        with self._start_lock:
+            return self._ensure(wait)
+
+    def _ensure(self, wait) -> bool:
         if self.alive():
             return True
         python = ROOT / ".venv" / "Scripts" / "python.exe"
@@ -194,11 +202,30 @@ def sess_path(project: str, sid: str) -> str:
 # ── Popups (tkinter, bottom-right corner) ────────────────────────────────────
 
 def _work_area():
-    class RECT(ctypes.Structure):
-        _fields_ = [("l", ctypes.c_long), ("t", ctypes.c_long), ("r", ctypes.c_long), ("b", ctypes.c_long)]
-    r = RECT()
-    ctypes.windll.user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0)   # SPI_GETWORKAREA
-    return r.l, r.t, r.r, r.b
+    """Work area (without the taskbar) of the monitor the mouse is on, so the prompt shows
+    up where the user is looking; the primary monitor if that fails."""
+    from ctypes import wintypes
+
+    class MONITORINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.DWORD), ("rcMonitor", wintypes.RECT), ("rcWork", wintypes.RECT),
+                    ("dwFlags", wintypes.DWORD)]
+    u32 = ctypes.windll.user32
+    try:
+        pt = wintypes.POINT()
+        u32.GetCursorPos(ctypes.byref(pt))
+        u32.MonitorFromPoint.restype = wintypes.HMONITOR
+        u32.MonitorFromPoint.argtypes = [wintypes.POINT, wintypes.DWORD]
+        mon = u32.MonitorFromPoint(pt, 2)                  # MONITOR_DEFAULTTONEAREST
+        mi = MONITORINFO(cbSize=ctypes.sizeof(MONITORINFO))
+        u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFO)]
+        if mon and u32.GetMonitorInfoW(mon, ctypes.byref(mi)):
+            w = mi.rcWork
+            return w.left, w.top, w.right, w.bottom
+    except Exception:
+        pass
+    r = wintypes.RECT()
+    u32.SystemParametersInfoW(0x0030, 0, ctypes.byref(r), 0)   # SPI_GETWORKAREA (primary)
+    return r.left, r.top, r.right, r.bottom
 
 
 class Popups:
@@ -209,10 +236,17 @@ class Popups:
         self.current = None
 
     def show(self, title: str, text: str, buttons: list[tuple[str, object]], timeout: int = 0,
-             on_timeout=None, primary: int = 0):
-        """buttons: [(label, callback)]; the first one is the primary (accent) button."""
+             on_timeout=None, primary: int = 0, sound: bool = False):
+        """buttons: [(label, callback)]; the first one is the primary (accent) button.
+        sound: play the Windows notification sound, for prompts that need an answer."""
         import tkinter as tk
         self.close()
+        if sound:
+            try:
+                import winsound
+                winsound.MessageBeep(0x40)   # MB_ICONASTERISK, asynchronous
+            except Exception:
+                pass
         w = tk.Toplevel(self.root)
         self.current = w
         w.overrideredirect(True)
@@ -353,6 +387,18 @@ class Watcher:
         if time.time() - getattr(self, "_last_alive", 0) > 3600:
             self._last_alive = time.time()
             log.info("alive (%s)", self.state_text)
+        if time.time() - getattr(self, "_last_server_check", 0) > 30:
+            self._last_server_check = time.time()
+            self.bg(self.keep_server_alive)
+
+    def keep_server_alive(self):
+        """Keep the web UI server running, so http://127.0.0.1:8766 always answers and a
+        recording starts without waiting for it to boot."""
+        if Server._start_lock.locked():
+            return   # a start is already in progress
+        if not self.server.alive():
+            log.info("web UI server not answering: starting it")
+            self.server.ensure()
 
     def step(self, apps: list[str]):
         now = time.time()
@@ -410,11 +456,21 @@ class Watcher:
             f"Llamada detectada en {self.call_label}",
             "¿Grabar y transcribir esta llamada? Avisa a los demás participantes de que se está grabando.",
             [("Grabar", lambda: self.bg(self.start_recording, False)), ("Ahora no", self.declined)],
-            timeout=self.cfg["prompt_timeout_sec"], on_timeout=self.declined)
+            timeout=self.cfg["prompt_timeout_sec"], on_timeout=self.missed, sound=True)
 
     def declined(self):
         log.info("not recording this call")
         self.set_state(f"Llamada en {self.call_label} (sin grabar)")
+
+    def missed(self):
+        """Prompt unanswered: don't record, but keep "Grabar esta llamada" in the tray menu."""
+        log.info("prompt unanswered: not recording (still possible from the tray menu)")
+        self.set_state(f"Llamada en {self.call_label} (sin grabar · clic derecho → Grabar esta llamada)")
+
+    def record_now(self):
+        """Tray menu: start recording the ongoing call (e.g. after missing the prompt)."""
+        self.popups.close()
+        self.bg(self.start_recording, False)
 
     def start_recording(self, automatic: bool):
         if not self.server.ensure():
@@ -484,7 +540,7 @@ class Watcher:
                 [("Final + minuta", lambda: self.bg(self.post_process, project, sid, True)),
                  ("Solo final", lambda: self.bg(self.post_process, project, sid, False)),
                  ("Nada", None)],
-                timeout=120))
+                timeout=300, sound=True))
         else:
             self.post_process(project, sid, what == "final_minutes")
 
@@ -602,6 +658,8 @@ class Tray:
                            checked=checked("after_call", "final"), radio=True),
                 p.MenuItem("Nada", setter("after_call", "nothing"),
                            checked=checked("after_call", "nothing"), radio=True))),
+            p.MenuItem("Grabar esta llamada", lambda icon, item: self.w.on_ui(self.w.record_now),
+                       enabled=lambda item: self.w.in_call and not self.recording),
             p.MenuItem("Detener grabación", lambda icon, item: self.w.bg(self.w.stop_recording),
                        enabled=lambda item: self.recording),
             p.MenuItem("Iniciar con Windows", lambda icon, item: toggle_autostart(),
