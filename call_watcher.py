@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -582,8 +583,14 @@ class Watcher:
     def _failed(self, title: str, error: str | None):
         self.set_state("Esperando llamadas")
         reason = (error or "").strip()
-        if "credit balance" in reason.lower():
+        low = reason.lower()
+        if "credit balance" in low:
             reason = "Tu cuenta de Claude no tiene crédito suficiente. Recárgala y vuelve a generar desde voice-rec."
+        elif "usage limits" in low or "spend limit" in low:
+            when = re.search(r"\d{4}-\d{2}-\d{2}", reason)
+            reason = ("Se alcanzó el límite de uso de tu cuenta de Claude"
+                      + (f"; se renueva el {when.group(0)}" if when else "")
+                      + ". Súbelo en console.anthropic.com o genera la versión cuando se renueve.")
         log.warning("%s: %s", title, error)
         self.on_ui(lambda: self.popups.show(title, (reason or "Abre voice-rec para ver el motivo.")[:300],
                                             [("Abrir", self.open_ui), ("Cerrar", None)], timeout=120))

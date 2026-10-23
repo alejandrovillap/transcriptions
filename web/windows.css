@@ -89,3 +89,9 @@
 .eye-btn, .sim-btn, .shot-del { width: 30px; height: 30px; opacity: .28; }
 .eye-btn:hover, .sim-btn:hover, .shot-del:hover { opacity: 1; }
 @media (hover: none) { .eye-btn, .sim-btn, .shot-del { opacity: .8; } }
+
+/* ── 8. Download button in the main panel header (windows.js) ─────────────── */
+.win-dl { margin: 0 0 8px 4px; display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.win-dl[hidden] { display: none; }
+#dlMenu { min-width: min(300px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
+#dlMenu a.mi { text-decoration: none; color: inherit; display: flex; }

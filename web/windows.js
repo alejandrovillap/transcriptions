@@ -106,7 +106,50 @@
     theme.before(b);
   }
 
+  // ── 4. Download menu: transcript (.txt), annotated (.html), minutes (.html) ──
+  const DL_ICON = '<svg viewBox="0 0 16 16" class="ico" style="width:14px;height:14px"><path d="M8 2.5v7.5M4.8 7l3.2 3.2L11.2 7M3 12.5h10"/></svg>';
+
+  function addDownloadButton() {
+    const head = $('.main-panel .panel-head');
+    if (!head || $('#dlBtn')) return;
+    const b = document.createElement('button');
+    b.id = 'dlBtn';
+    b.type = 'button';
+    b.className = 'ghost-btn small win-dl';
+    b.title = T('Download the transcript, the annotated version or the minutes');
+    b.innerHTML = `${DL_ICON}<span>${T('Download')}</span>`;
+    head.appendChild(b);
+    const menu = document.createElement('div');
+    menu.className = 'menu hidden';
+    menu.id = 'dlMenu';
+    document.body.appendChild(menu);
+    b.onclick = () => openDownloads(b, menu);
+  }
+
+  async function openDownloads(anchor, menu) {
+    if (typeof st === 'undefined' || !st.project || !st.sid) return;
+    const base = `/api/projects/${encodeURIComponent(st.project)}/sessions/${encodeURIComponent(st.sid)}`;
+    let a = {};
+    try { a = await (await fetch(base + '/downloads')).json(); } catch (_) { /* offline */ }
+    const item = (ok, kind, title, sub) => ok
+      ? `<a class="mi" href="${base}/download/${kind}" download><span class="mi-main"><div class="mi-title">${title}</div><div class="mi-sub">${sub}</div></span></a>`
+      : `<div class="mi" style="opacity:.5;cursor:default"><span class="mi-main"><div class="mi-title">${title}</div><div class="mi-sub">${T('Not generated yet')}</div></span></div>`;
+    menu.innerHTML =
+      item(a.transcript, 'transcript', T('Transcript'), T('Plain text (.txt), every line with its time')) +
+      item(a.beautified, 'beautified', `${T('Annotated version')}${a.beautified ? ` v${a.beautified}` : ''}`, T('HTML with the screenshots inside; opens in any browser')) +
+      item(a.minutes, 'minutes', `${T('Minutes')}${a.minutes ? ` m${a.minutes}` : ''}`, T('HTML; open it and print or save as PDF / Word'));
+    menu.onclick = e => { if (e.target.closest('a.mi')) setTimeout(() => window.closeMenus && closeMenus(), 50); };
+    if (window.openMenu) openMenu(menu, anchor, 'right');
+  }
+
+  function syncDownloadButton() {
+    const b = $('#dlBtn');
+    if (b) b.hidden = typeof st === 'undefined' || !st.sid || !st.session;
+  }
+
   function run() {
+    addDownloadButton();
+    syncDownloadButton();
     enhanceControl();
     const modal = $('.modal');
     if (modal) enhanceSettings(modal);

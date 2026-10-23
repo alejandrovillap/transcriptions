@@ -34,6 +34,7 @@ from fastapi.staticfiles import StaticFiles
 import beautify
 import minutes_api   # Windows build: formal minutes (minutes.py)
 import audio_api     # Windows build: audio device list (audio_sources.py)
+import downloads_api # Windows build: transcript / annotated / minutes downloads
 import claude_cli
 import select_frames as SF
 import sessions as S
@@ -777,6 +778,7 @@ app = FastAPI(lifespan=lifespan)
 minutes_api.hub = hub
 app.include_router(minutes_api.router)
 app.include_router(audio_api.router)
+app.include_router(downloads_api.router)
 S.PROJECTS_DIR.mkdir(exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(S.PROJECTS_DIR)), name="files")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")

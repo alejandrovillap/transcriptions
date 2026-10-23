@@ -166,9 +166,19 @@ window.I18N = (() => {
     'Ask anything about this transcript.': 'Pregunta lo que quieras sobre esta transcripción.',
     // Windows build (windows.js)
     'Options': 'Opciones', 'Recording': 'Grabación', 'Audio': 'Audio',
+    'Download': 'Descargar', 'Not generated yet': 'Aún no generada', 'Annotated version': 'Versión anotada',
+    'Download the transcript, the annotated version or the minutes': 'Descargar la transcripción, la versión anotada o la minuta',
+    'Plain text (.txt), every line with its time': 'Texto (.txt), cada línea con su hora',
+    'HTML with the screenshots inside; opens in any browser': 'HTML con las capturas incluidas; se abre en cualquier navegador',
+    'HTML; open it and print or save as PDF / Word': 'HTML; ábrela e imprímela o guárdala como PDF / Word',
   };
   const MON = { Jan: 'ene', Feb: 'feb', Mar: 'mar', Apr: 'abr', May: 'may', Jun: 'jun', Jul: 'jul', Aug: 'ago', Sep: 'sept', Oct: 'oct', Nov: 'nov', Dec: 'dic' };
+  // Claude API errors (Beautify / minutes / chat) arrive as raw JSON; say what happened.
+  const limitMsg = d => `Se alcanzó el límite de uso de tu cuenta de Claude${d ? `; se renueva el ${d}` : ''}. Súbelo en console.anthropic.com o espera a esa fecha.`;
   const P = [
+    [/^API Error: \d+\b(?=[\s\S]*?(?:usage limits|spend limit))(?:[\s\S]*?(\d{4}-\d{2}-\d{2}))?[\s\S]*$/, (m, d) => limitMsg(d)],
+    [/^API Error: \d+\b[\s\S]*?Credit balance is too low[\s\S]*$/, () => 'Tu cuenta de Claude no tiene crédito. Recárgala y vuelve a generar.'],
+    [/^API Error: (?:400|429) \{"type":"error"[\s\S]*$/, () => 'Error de la cuenta de Claude (límite de uso o crédito). Pasa el ratón para ver el detalle.'],
     [/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})( · \d{2}:\d{2})?$/, (m, a, d, t) => `${d} ${MON[a]}${t || ''}`],
     [/^(\d+) min ago$/, (m, n) => `hace ${n} min`],
     [/^Live · (.*)$/, (m, d) => `En vivo · ${tr(d)}`],
@@ -187,9 +197,10 @@ window.I18N = (() => {
     [/^Claude \((.*)\) started(.*)$/, (m, k, rest) => `Claude (${k}) iniciado${rest.replace(' · project knowledge connected', ' · conocimiento del proyecto conectado')}`],
     [/^Searching files: (.*)$/, (m, q) => `Buscando archivos: ${q}`],
     [/^Beautification finished · v(\d+)(.*)$/, (m, v, f) => `Versión anotada lista · v${v}${f.replace('(final)', '(final)')}`],
-    [/^Beautify failed: (.*)$/, (m, e) => `Falló la versión anotada: ${e}`],
-    [/^Minutes ready(.*)$/, (m, rest) => `Minuta lista${rest}`], [/^Minutes failed: (.*)$/, (m, e) => `Falló la minuta: ${e}`],
-    [/^⚠ v(\d+) failed$/, (m, v) => `⚠ falló v${v}`], [/^(\d+) to write$/, (m, d) => `${d} en escribir`],
+    [/^Beautify failed: ([\s\S]*)$/, (m, e) => `Falló la versión anotada: ${tr(e)}`],
+    [/^Minutes ready(.*)$/, (m, rest) => `Minuta lista${rest}`], [/^Minutes failed: ([\s\S]*)$/, (m, e) => `Falló la minuta: ${tr(e)}`],
+    [/^⚠ v(\d+) failed$/, (m, v) => `⚠ falló v${v}`],
+    [/^⚠ m(\d+) failed: ([\s\S]*)$/, (m, v, e) => `⚠ falló m${v}: ${tr(e)}`], [/^(\d+) to write$/, (m, d) => `${d} en escribir`],
     [/^(\d+:\d{2}) to (write|generate)$/, (m, d) => `${d} en generarse`],
     [/^Windows defaults now: (.*)$/, (m, d) => `Predeterminados ahora: ${d}`],
     [/^(\d+) of (\d+) frames go to Beautify$/, (m, a, b) => `${a} de ${b} escenas van a la versión anotada`],
