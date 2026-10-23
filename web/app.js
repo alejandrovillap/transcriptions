@@ -1482,7 +1482,7 @@ async function openSettings() {
         <div class="frow"><label>Notes</label><div class="help" style="grid-column:2;margin:6px 0 0">Context and corrections live in the <b>Notes</b> tab (<code>notes.md</code> in the project folder).</div></div>
       </fieldset>` : ''}
       <fieldset class="fset"><legend>AI</legend>
-        <div class="frow"><label>Beautify engine</label><select class="field" id="setEngine"><option value="claude" ${s.beautify_engine !== 'api' ? 'selected' : ''}>Claude Code (recommended)</option><option value="api" ${s.beautify_engine === 'api' ? 'selected' : ''}>Gemini / OpenAI API (single pass, no tools)</option></select></div>
+        <div class="frow"><label>Beautify engine</label><select class="field" id="setEngine"><option value="claude_direct" ${s.beautify_engine === 'claude_direct' ? 'selected' : ''}>Claude, direct generation (fast, recommended)</option><option value="claude" ${s.beautify_engine === 'claude' ? 'selected' : ''}>Claude Code agent (slow: reads files, thinks, edits)</option><option value="api" ${s.beautify_engine === 'api' ? 'selected' : ''}>Gemini / OpenAI API (single pass, no tools)</option></select></div>
         <div class="frow"><label>Beautify model</label><select class="field" id="setBModel">${modelOpts(s.beautify_model)}</select></div>
         <div class="frow"><label>Chat model</label><select class="field" id="setCModel">${modelOpts(s.chat_model)}</select></div>
         <div class="frow"><label>Final version</label><label class="switch" style="padding-top:5px"><input type="checkbox" id="setAuto" ${s.auto_final_beautify ? 'checked' : ''}><span class="knob"></span>Offer to build the final version when recording stops</label></div>

@@ -121,6 +121,8 @@ window.I18N = (() => {
     'Context and corrections live in the': 'El contexto y las correcciones están en la pestaña', 'in the project folder).': 'en la carpeta del proyecto).',
     'tab (': '(', 'AI': 'IA', 'Beautify engine': 'Motor para la versión anotada', 'Beautify model': 'Modelo para la versión anotada',
     'Chat model': 'Modelo del chat', 'Claude Code (recommended)': 'Claude Code (recomendado)',
+    'Claude, direct generation (fast, recommended)': 'Claude, generación directa (rápida, recomendada)',
+    'Claude Code agent (slow: reads files, thinks, edits)': 'Agente de Claude Code (lento: lee archivos, piensa, edita)',
     'Gemini / OpenAI API (single pass, no tools)': 'API de Gemini / OpenAI (una pasada, sin herramientas)',
     'Offer to build the final version when recording stops': 'Ofrecer la versión final al detener la grabación',
     'Meetings vault': 'Vault de reuniones',

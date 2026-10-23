@@ -35,6 +35,7 @@ import beautify
 import minutes_api   # Windows build: formal minutes (minutes.py)
 import audio_api     # Windows build: audio device list (audio_sources.py)
 import downloads_api # Windows build: transcript / annotated / minutes downloads
+import beautify_direct # Windows build: Beautify in one generation (no agent)
 import claude_cli
 import select_frames as SF
 import sessions as S
@@ -535,6 +536,22 @@ class BeautifyJobs:
                 self.step(job, "Generating with API model (single pass)")
                 await asyncio.to_thread(beautify.run_api, spec)
                 ok = True
+            elif spec["settings"]["beautify_engine"] == "claude_direct":
+                # Windows build: one generation, no agent loop (beautify_direct.py)
+                last_push = [0.0]
+
+                def on_chars(n):
+                    job["chars"] += n
+                    if time.time() - last_push[0] > 0.5:
+                        last_push[0] = time.time()
+                        hub.emit({"type": "beautify_progress", "project": job["project"],
+                                  "sid": job["sid"], "chars": job["chars"]})
+
+                info = await beautify_direct.run(spec, on_chars, lambda t: self.step(job, t),
+                                                 register_proc=lambda p: self.procs.__setitem__(key, p))
+                result = {"total_cost_usd": info["cost"],
+                          "result": f"{info['parts']} part(s), {job['chars'] // 1000} K characters"}
+                ok = True
             else:
                 proc = await asyncio.create_subprocess_exec(
                     *beautify.claude_command(spec), cwd=str(spec["cwd"]), stdin=asyncio.subprocess.PIPE,
@@ -567,7 +584,8 @@ class BeautifyJobs:
                                 self.broadcast(job)
                         elif inner.get("type") == "content_block_delta":
                             d = inner.get("delta", {})
-                            job["chars"] += len(d.get("text") or d.get("partial_json") or "")
+                            # thinking counts as progress too, so the job never looks frozen
+                            job["chars"] += len(d.get("text") or d.get("partial_json") or d.get("thinking") or "")
                             if time.time() - last_push > 0.5:
                                 last_push = time.time()
                                 hub.emit({"type": "beautify_progress", "project": job["project"],

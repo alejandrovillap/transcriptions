@@ -10,6 +10,12 @@ import os
 import shutil
 from pathlib import Path
 
+# Extended thinking is on by default in headless Claude Code. On a long meeting the model
+# could think for many minutes before writing anything (billed as output, and the UI looked
+# frozen). Cap it for every run started from this app (Beautify, minutes, chat); the child
+# processes inherit the environment. Override by setting MAX_THINKING_TOKENS yourself.
+os.environ.setdefault("MAX_THINKING_TOKENS", "4000")
+
 
 def claude_binary() -> str | None:
     found = shutil.which("claude")

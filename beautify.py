@@ -174,10 +174,14 @@ def prepare(project: str, sid: str, mode: str = "update", live: bool = False) ->
         "including other spellings and mishearings of the same words:\n"
         + "".join(f"    {l}\n" for l in notes.splitlines()) if notes else "")
 
+    # Windows build: only earlier MINUTES (short: names, roles, decisions). Earlier annotated
+    # transcripts are long; reading them made every request much bigger (cost, rate limits)
+    # for little gain.
     docs_dir = project_dir(project) / "docs"
-    docs = sorted(p.name for p in docs_dir.glob("*") if p.suffix in (".html", ".txt", ".md")) if docs_dir.exists() else []
-    docs_block = (f"- Earlier documents for this project (may help with names and context): {docs_dir}\n"
-                  + "".join(f"    {d}\n" for d in docs[-15:])) if docs else ""
+    docs = sorted(p.name for p in docs_dir.glob("*") if p.suffix in (".html", ".txt", ".md")
+                  and re.search(r"minut", p.name, re.I)) if docs_dir.exists() else []
+    docs_block = (f"- Minutes of earlier meetings of this project (names, roles, decisions; read only if "
+                  f"needed): {docs_dir}\n" + "".join(f"    {d}\n" for d in docs[-5:])) if docs else ""
 
     mode_title = {"final": "FINAL version", "full": "current version", "update": "updated version"}[mode]
     live_note = (" (the session is still being recorded, so the transcript ends abruptly; that's expected)"

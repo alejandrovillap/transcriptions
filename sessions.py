@@ -23,7 +23,7 @@ SEL_RE = re.compile(r"^\[selection: (.*)\]$", re.S)
 SHOT_NAME_RE = re.compile(r"(?:screenshot|frame)_(\d{8})_(\d{6})")
 
 DEFAULT_SETTINGS = {
-    "beautify_engine": "claude",      # claude (Claude Code CLI) | api (Gemini/OpenAI)
+    "beautify_engine": "claude_direct",  # claude_direct (one generation, fast) | claude (agent) | api (Gemini/OpenAI)
     "beautify_model": "opus",
     "chat_model": "sonnet",
     "api_model": "",                  # for the api engine; empty = provider default
