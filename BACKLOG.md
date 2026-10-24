@@ -1,6 +1,6 @@
 # Backlog
 
-Actualizado: 2026-10-21. Plan de fondo: strawman «Reuniones con memoria» (privado):
+Actualizado: 2026-10-23. Plan de fondo: strawman «Reuniones con memoria» (privado):
 https://claude.ai/artifact/NRbBAqBNPwE5cVe6112mEU
 
 Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
@@ -23,7 +23,7 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 
 ### Fase 2 · un índice, dos usos (siguiente)
 - [ ] Índice semántico **local** de las notas del vault (minutas y glosario), actualizado al archivar cada minuta. Falta elegir el modelo multilingüe (es/en) que corra en CPU.
-- [ ] **B** · Los avisos NEW / CONFIRMS / UPDATES buscan en ese índice y citan la reunión y la fecha en «Prior view» (hoy solo buscan con grep en el vault).
+- [ ] **B** · Los avisos NEW / CONFIRMS / UPDATES buscan en ese índice y citan la reunión y la fecha en «Prior view». Desde 46b5352, Anotar usa por defecto la **generación directa** (sin herramientas): ya no lee el vault por su cuenta y solo recibe el glosario y las 2 minutas más recientes de `docs/`. B tiene que meter en su prompt los fragmentos que devuelva el índice (solo el modo agente sigue usando grep en el vault).
 - [ ] **E** · «Pregúntale a todas tus reuniones»: Preguntar responde sobre todo el historial del proyecto, con citas a reunión y minuto.
 
 ### Fase 3 · que trabaje por ti
@@ -69,6 +69,10 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 
 | Fecha | Commit | Qué |
 |---|---|---|
+| 2026-10-23 | 46b5352 | Anotar en una sola generación directa (sin agente), pensamiento acotado a 4000 tokens |
+| 2026-10-23 | b97dc04 | Descargas (transcripción, versión anotada con capturas incrustadas, minuta); errores de límite de Claude legibles |
+| 2026-10-22 | 950c00a | Vigilante: aviso en el monitor del mouse, 2 min para responder, «Grabar esta llamada» y el servidor siempre arriba |
+| 2026-10-21 | c858578 | Este backlog |
 | 2026-10-21 | aa038c1 | Vault de reuniones: minuta → nota, glosario, `--vocab-correct` con Parakeet, hotwords completos |
 | 2026-10-21 | 64768c2 · 043c09c · 07fa51b | Etiqueta «En vivo» traducida · puerto fijo 8766 · vigilante que sobrevive cuelgues |
 | 2026-10-19 | 8ae163e | Revisión: salida de `rediarize.py` a subcarpeta, suavizado lineal |
