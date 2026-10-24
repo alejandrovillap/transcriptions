@@ -61,9 +61,9 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 - [ ] **Modelo de embeddings** para la fase 2 (multilingüe, CPU, tamaño razonable).
 
 ### Limpieza
-- [ ] Sesión fantasma `20261019_171338.diarized` en el proyecto `test`, creada por el `rediarize.py` anterior. Contiene la segunda grabación de prueba; decidir si se conserva.
-- [ ] Borrar el worktree `C:\Users\villa\tnm-asr` y las ramas ya fusionadas `ui/fluent-look`, `fix/asr-quality` y `feat/meetings-vault`.
-- [ ] Actualización menor de FastAPI disponible (0.149 → 0.157).
+- [x] Sesión `20261019_171338.diarized` del proyecto `test`, creada por el `rediarize.py` anterior: se conserva tal cual porque contiene la segunda grabación de prueba (decidido 2026-10-23). El `rediarize.py` actual ya no crea sesiones así.
+- [x] Borrar el worktree `C:\Users\villa\tnm-asr` y las ramas ya fusionadas `ui/fluent-look`, `fix/asr-quality` y `feat/meetings-vault` (2026-10-23).
+- [x] FastAPI actualizado en el `.venv` a 0.162 (2026-10-23); `pip check` sin conflictos y servidor probado.
 
 ## Historial
 
