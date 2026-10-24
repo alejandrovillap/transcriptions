@@ -45,13 +45,13 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 - [ ] Glosario durante una grabación en vivo con Parakeet (con audio sintético sí funciona).
 
 ### Bugs y riesgos conocidos
-- [ ] **Respaldo de Whisper lento al empezar**: la primera frase en el idioma equivocado frena la transcripción mientras Whisper termina de cargar (unos 80 s, o la descarga de 1.6 GB la primera vez). En CPU, Whisper va unas 2 veces más lento que el tiempo real.
-- [ ] **Claude hereda el entorno**: si el servidor se lanza desde una sesión de Claude Code, el `claude` que abre usa las variables de esa sesión y falla con 401. Hoy se evita arrancando con un script que limpia `CLAUDE*`/`ANTHROPIC*`; conviene que `claude_cli.py` las quite solo cuando detecte que corre anidado.
-- [ ] **Login de la CLI aparte**: la sesión de la app de escritorio no renueva la de `claude`. Si Anotar o Minuta dan 401, hay que correr `claude auth login`.
-- [ ] **Eco sin audífonos**: el micrófono capta las bocinas y se mezcla con el audio del sistema. No hay cancelación de eco; solo está documentado.
-- [ ] **Minuta que se sale de la plantilla**: el archivado lee la estructura HTML de `minutes_template.html`. Si el modelo cambia las clases, la nota se guarda igual, pero el frontmatter puede quedar sin decisiones o acuerdos. Falta un aviso cuando eso pase.
-- [ ] **Interjecciones cortas**: el suavizado de turnos reasigna turnos de 1–2 palabras («Sí, claro») entre dos turnos de la misma persona. Es un compromiso aceptado; revisarlo si molesta en reuniones reales.
-- [ ] **Corte forzado del VAD**: tras un corte duro, el conteo de silencio se reinicia y la frase puede tardar 1.5 s más en cerrarse. Es menor.
+- [x] **Respaldo de Whisper lento al empezar** (2026-10-23): una frase espera a Whisper como máximo 20 s (`LANG_FALLBACK_WAIT_SEC`); si aún no cargó, se queda con lo que reconoció Parakeet y se avisa una vez. Sigue pendiente: en CPU, Whisper va unas 2 veces más lento que el tiempo real cuando sí rehace una frase.
+- [x] **Claude hereda el entorno** (2026-10-23): `claude_cli.py` quita las variables de la sesión anfitriona cuando corre anidado (`CLAUDECODE=1`). Se probó lanzando el vigilante desde una sesión de Claude Code: Preguntar respondió normal. Nota: el 401 del 19 oct venía sobre todo de la credencial vencida de la CLI; esto es una defensa, y los scripts de arranque «limpio» ya no hacen falta.
+- [x] **Login de la CLI aparte** (2026-10-23): un 401 ahora se muestra en español con el remedio («ejecuta claude auth login»), en la interfaz y en los avisos del vigilante. La causa no tiene arreglo en código: la sesión de escritorio no renueva la de `claude`.
+- [ ] **Eco sin audífonos** · aceptado: el micrófono capta las bocinas y se mezcla con el audio del sistema. No hay cancelación de eco; solo está documentado.
+- [x] **Minuta que se sale de la plantilla** (2026-10-23): si el archivado no reconoce decisiones, acuerdos o título, o no encuentra asistentes, decisiones ni acuerdos, lo avisa en el manifest de la minuta (`vault_warning`), en el frontmatter (`parse_warning`) y al inicio de la nota.
+- [ ] **Interjecciones cortas** · aceptado: el suavizado de turnos reasigna turnos de 1–2 palabras («Sí, claro») entre dos turnos de la misma persona. Revisarlo si molesta en reuniones reales.
+- [x] **Corte forzado del VAD** · no era un bug (2026-10-23): pasados 15 s, el corte suave se dispara en la primera ventana de silencio, así que el corte duro siempre cae en voz y no queda silencio pendiente. Se probó con un caso dirigido.
 
 ### Interfaz
 - [ ] Textos sin traducir: «1 session», «New project…», «Speaking · …», «recording · sent after a … pause», «Transcript saved to …».

@@ -16,6 +16,27 @@ from pathlib import Path
 # processes inherit the environment. Override by setting MAX_THINKING_TOKENS yourself.
 os.environ.setdefault("MAX_THINKING_TOKENS", "4000")
 
+# Started from inside a Claude Code session (an agent working on this repo, the desktop app's
+# terminal), the app inherits that session's variables, and a `claude` launched with them uses
+# the host session's short-lived credentials: "401 OAuth access token has expired". Drop them so
+# the CLI uses its own login. Only when nested (CLAUDECODE=1): a user's own settings stay.
+_HOST_SESSION_PREFIXES = ("CLAUDE_CODE_", "CLAUDE_AGENT_SDK_")
+_HOST_SESSION_NAMES = {"CLAUDECODE", "CLAUDE_PID", "CLAUDE_EFFORT", "CLAUDE_PREVIEW_CLASSIFIER_FLOOR",
+                       "ANTHROPIC_BASE_URL"}
+
+
+def _drop_host_session_env() -> list[str]:
+    if os.environ.get("CLAUDECODE") != "1":
+        return []
+    gone = [k for k in list(os.environ)
+            if k.upper() in _HOST_SESSION_NAMES or k.upper().startswith(_HOST_SESSION_PREFIXES)]
+    for k in gone:
+        os.environ.pop(k, None)
+    return gone
+
+
+DROPPED_HOST_ENV = _drop_host_session_env()
+
 
 def claude_binary() -> str | None:
     found = shutil.which("claude")

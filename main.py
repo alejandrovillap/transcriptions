@@ -254,14 +254,20 @@ def guess_lang(text):
     return None
 
 
+LANG_FALLBACK_WAIT_SEC = 20   # longest a phrase waits for Whisper to finish loading
+
+
 class LangFallback:
     """Whisper loaded in the background, only when a fixed language is used with an engine
-    that ignores it; get() waits for it the first time it is needed."""
+    that ignores it. get() waits at most LANG_FALLBACK_WAIT_SEC for it: loading takes over a
+    minute (minutes on the first download), and live text must not stall that long, so a
+    phrase that comes before Whisper is ready keeps the engine's own output."""
 
     def __init__(self):
         self._engine = None
         self._ready = threading.Event()
         self._started = False
+        self._warned = False
 
     def start(self):
         if self._started:
@@ -280,10 +286,15 @@ class LangFallback:
 
         threading.Thread(target=load, daemon=True).start()
 
-    def get(self):
+    def get(self, timeout: float = LANG_FALLBACK_WAIT_SEC):
         if not self._started:
             return None
-        self._ready.wait()
+        if not self._ready.wait(timeout):
+            if not self._warned:
+                self._warned = True
+                print("\r\033[K[lang] Whisper is still loading; keeping this phrase as recognized")
+                events.emit("lang_fallback_pending")
+            return None
         return self._engine
 
 
@@ -584,6 +595,8 @@ def vad_loop(vad_model):
                     speech_probs = speech_probs[cut:]
                     speech_start_sample += cut_samples
                     speech_count = sum(p >= VAD_THRESHOLD for p in speech_probs)
+                    # No pending silence is lost: past SOFT_CHUNK_SEC the first silent window
+                    # already cut, so a hard cut always happens on a speech window.
                     silent_count = 0
                     if not speech_probs:
                         is_speaking = False

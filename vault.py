@@ -343,6 +343,26 @@ def read_frontmatter(path: Path) -> dict:
         return {}
 
 
+def structure_warning(rec: dict, info: dict) -> str:
+    """Spanish warning when the minutes left the template's structure: minutes.py counted
+    decision / action elements in the HTML (rec), but the converter could not read them as
+    such (info), so the note's frontmatter would miss them."""
+    missing = []
+    if (rec.get("decisions") or 0) > len(info["decisions"]):
+        missing.append(f"decisiones ({len(info['decisions'])} de {rec['decisions']})")
+    if (rec.get("actions") or 0) > len(info["actions"]):
+        missing.append(f"acuerdos ({len(info['actions'])} de {rec['actions']})")
+    if not info["title"]:
+        missing.append("título")
+    if not (info["attendees"] or info["decisions"] or info["actions"]):
+        # renamed classes are invisible to both counts; a real minute has at least one of these
+        missing.append("asistentes, decisiones y acuerdos (no se reconoció ninguno)")
+    if not missing:
+        return ""
+    return ("La minuta no siguió del todo la estructura de la plantilla; en el frontmatter faltan "
+            + ", ".join(missing) + ". El texto de la nota está completo: revísala o vuelve a generar la minuta.")
+
+
 def archive_minutes(project: str, sid: str, rec: dict, html: str) -> Path | None:
     """Write (or rewrite) the session's meeting note from a finished minutes version, refresh
     the indexes and commit. Returns the note's path, or None when no vault is configured."""
@@ -377,6 +397,11 @@ def archive_minutes(project: str, sid: str, rec: dict, html: str) -> Path | None
             "open_questions": info["open"],
         },
     }
+    warning = structure_warning(rec, info)
+    if warning:
+        meta["parse_warning"] = warning
+        rec["vault_warning"] = warning      # saved in the minutes manifest by minutes.finish
+        md = f"> ⚠️ {warning}\n\n" + md
     # One note per session: replace an earlier note of the same session (its title may differ).
     for old in mdir.glob(f"{dt:%Y-%m-%d_%H%M}_*.md"):
         if (read_frontmatter(old).get("meeting") or {}).get("session") == sid:

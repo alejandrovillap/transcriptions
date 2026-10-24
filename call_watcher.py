@@ -594,7 +594,10 @@ class Watcher:
         self.set_state("Esperando llamadas")
         reason = (error or "").strip()
         low = reason.lower()
-        if "credit balance" in low:
+        if "api error: 401" in low or "failed to authenticate" in low:
+            reason = ("La sesión de Claude en este equipo venció. Abre una terminal, ejecuta "
+                      "«claude auth login» y vuelve a generar desde voice-rec.")
+        elif "credit balance" in low:
             reason = "Tu cuenta de Claude no tiene crédito suficiente. Recárgala y vuelve a generar desde voice-rec."
         elif "usage limits" in low or "spend limit" in low:
             when = re.search(r"\d{4}-\d{2}-\d{2}", reason)

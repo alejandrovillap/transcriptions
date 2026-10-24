@@ -178,6 +178,8 @@ window.I18N = (() => {
   // Claude API errors (Beautify / minutes / chat) arrive as raw JSON; say what happened.
   const limitMsg = d => `Se alcanzó el límite de uso de tu cuenta de Claude${d ? `; se renueva el ${d}` : ''}. Súbelo en console.anthropic.com o espera a esa fecha.`;
   const P = [
+    // The `claude` CLI keeps its own login (not the desktop app's): expired → say how to renew it.
+    [/^(?:Failed to authenticate\.\s*)?API Error: 401\b[\s\S]*$/, () => 'La sesión de Claude en este equipo venció. Abre una terminal, ejecuta «claude auth login» y vuelve a generar.'],
     [/^API Error: \d+\b(?=[\s\S]*?(?:usage limits|spend limit))(?:[\s\S]*?(\d{4}-\d{2}-\d{2}))?[\s\S]*$/, (m, d) => limitMsg(d)],
     [/^API Error: \d+\b[\s\S]*?Credit balance is too low[\s\S]*$/, () => 'Tu cuenta de Claude no tiene crédito. Recárgala y vuelve a generar.'],
     [/^API Error: (?:400|429) \{"type":"error"[\s\S]*$/, () => 'Error de la cuenta de Claude (límite de uso o crédito). Pasa el ratón para ver el detalle.'],
