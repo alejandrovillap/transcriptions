@@ -183,6 +183,8 @@ window.I18N = (() => {
     [/^API Error: (?:400|429) \{"type":"error"[\s\S]*$/, () => 'Error de la cuenta de Claude (límite de uso o crédito). Pasa el ratón para ver el detalle.'],
     [/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) (\d{1,2})( · \d{2}:\d{2})?$/, (m, a, d, t) => `${d} ${MON[a]}${t || ''}`],
     [/^(\d+) min ago$/, (m, n) => `hace ${n} min`],
+    [/^audio: No audio from '(.*)' for (\d+) s: reconnecting the devices$/, (m, d, s) => `Audio: no llega sonido de «${d}» desde hace ${s} s; reconectando los dispositivos…`],
+    [/^Audio restored after (\d+) s \(device reconnected\)$/, (m, s) => `Audio recuperado tras ${s} s (dispositivo reconectado)`],
     [/^Live · (.*)$/, (m, d) => `En vivo · ${tr(d)}`],
     [/^of (\d{2}:\d{2}:\d{2}–\d{2}:\d{2}:\d{2})$/, (m, r) => `de ${r}`],
     [/^Answers come from the (live|saved) transcript( and its screenshots)?\.$/, (m, k, sh) => `Las respuestas salen de la transcripción ${k === 'live' ? 'en vivo' : 'guardada'}${sh ? ' y sus capturas' : ''}.`],

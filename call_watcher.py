@@ -360,7 +360,8 @@ class Watcher:
             fn(*a)
         except Exception as e:
             log.exception("background task failed")
-            self.on_ui(lambda: self.popups.show("Algo falló", str(e)[:300], [("OK", None)], timeout=20))
+            msg = str(e)[:300]   # bind now: `e` is gone once the except block ends
+            self.on_ui(lambda: self.popups.show("Algo falló", msg, [("OK", None)], timeout=20))
 
     def set_state(self, text: str, recording: bool | None = None):
         self.state_text = text
@@ -563,14 +564,23 @@ class Watcher:
         last_beautify = lambda: (self.server.get(base)["manifest"]["versions"] or [{}])[-1]
         last_minutes = lambda: (self.server.get(base + "/minutes")["versions"] or [{}])[-1]
         self.set_state("Generando la versión final…", recording=False)
-        self.server.post(base + "/beautify", {"mode": "final"})
+        try:
+            self.server.post(base + "/beautify", {"mode": "final"})
+        except urllib.error.HTTPError as e:
+            if e.code != 409:   # 409: already running (started from the UI) — just wait for it
+                raise
+            log.info("final version already running for %s / %s; waiting for it", project, sid)
         ok = self._wait(lambda: last_beautify().get("status"))
         if not ok:
             self._failed("Falló la versión final", last_beautify().get("error"))
             return
         if with_minutes:
             self.set_state("Escribiendo la minuta…")
-            self.server.post(base + "/minutes")
+            try:
+                self.server.post(base + "/minutes")
+            except urllib.error.HTTPError as e:
+                if e.code != 409:   # already being written: wait for it
+                    raise
             ok = self._wait(lambda: last_minutes().get("status"))
             if not ok:
                 self._failed("Falló la minuta (la versión final sí está lista)", last_minutes().get("error"))

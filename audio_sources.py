@@ -23,6 +23,7 @@ from __future__ import annotations
 import collections
 import sys
 import threading
+import time
 from math import gcd
 
 import numpy as np
@@ -99,40 +100,69 @@ class _Resampler:
 
 
 class MixedInput:
-    """Drop-in for sd.InputStream(callback=...): start() / stop() / close()."""
+    """Drop-in for sd.InputStream(callback=...): start() / stop() / close().
+
+    A watchdog keeps it alive: if the microphone stops delivering audio for STALL_SEC
+    (Windows reset the device, e.g. a webcam mic when Teams toggles the camera, a headset
+    plugged in or out), the devices are looked up again and reopened, retrying every
+    RETRY_SEC. Meanwhile silence is fed in real time, so the recorder's timeline (and the
+    timestamps) stay aligned with the clock. on_event(kind, message) reports it."""
 
     MAX_BUFFER_SEC = 2.0
+    STALL_SEC = 3.0        # no microphone audio for this long = the stream died
+    RETRY_SEC = 3.0        # between reopen attempts
 
     def __init__(self, callback, samplerate: int = TARGET_SR, blocksize: int = 1600, mic: str = "",
-                 system: bool = True, output: str = "", mic_gain: float = 1.0, system_gain: float = 1.0):
+                 system: bool = True, output: str = "", mic_gain: float = 1.0, system_gain: float = 1.0,
+                 on_event=None):
         if samplerate != TARGET_SR:
             raise ValueError("MixedInput produces 16 kHz audio")
         self.callback, self.block = callback, blocksize
         self.mic_gain, self.system_gain = mic_gain, system_gain
-        pa = self.pa = _pa()
-        self.p = pa.PyAudio()
-        wasapi, mics, loops = _wasapi_devices(self.p, pa)
-        if mic:
-            self.mic = _pick(mics, mic)
+        self.want_mic, self.want_system, self.want_output = mic, system, output
+        self.on_event = on_event or (lambda kind, message: None)
+        self.pa = _pa()
+        self.p = None
+        self._streams = []
+        self._lock = threading.Lock()          # system-audio buffers
+        self._feed_lock = threading.Lock()     # one producer of 100 ms blocks at a time
+        self._reopen_lock = threading.Lock()
+        self.errors: list[str] = []
+        self._running = threading.Event()
+        self._last_mic = 0.0
+        self.restarts = 0
+        self._resolve()
+
+    # -- devices --
+    def _resolve(self):
+        """(Re)create PyAudio, so devices plugged in or reset since are seen, and pick them."""
+        if self.p is not None:
+            try:
+                self.p.terminate()
+            except Exception:
+                pass
+        self.p = self.pa.PyAudio()
+        wasapi, mics, loops = _wasapi_devices(self.p, self.pa)
+        self.mic = None
+        if self.want_mic:
+            self.mic = _pick(mics, self.want_mic)
             if self.mic is None:
-                print(f"[audio] microphone '{mic}' not found, using the default one", file=sys.stderr)
-        if not mic or self.mic is None:
+                print(f"[audio] microphone '{self.want_mic}' not found, using the default one", file=sys.stderr)
+        if self.mic is None:
             self.mic = self.p.get_device_info_by_index(wasapi["defaultInputDevice"])
-        if not system:
+        if not self.want_system:
             self.loops = []
-        elif not output:
+        elif not self.want_output:
             self.loops = loops
-        elif output == "default":
+        elif self.want_output == "default":
             default_name = self.p.get_device_info_by_index(wasapi["defaultOutputDevice"])["name"]
             self.loops = [d for d in loops if _clean(d["name"]) == default_name][:1]
         else:
-            d = _pick(loops, output)
+            d = _pick(loops, self.want_output)
             self.loops = [d] if d else loops
-        self._streams = []
         self._mic_pending = np.zeros(0, np.float32)
-        self._bufs = [collections.deque() for _ in self.loops]
-        self._lock = threading.Lock()
-        self.errors: list[str] = []
+        with self._lock:
+            self._bufs = [collections.deque() for _ in self.loops]
 
     def describe(self) -> str:
         outs = ", ".join(_clean(d["name"]) for d in self.loops)
@@ -155,7 +185,7 @@ class MixedInput:
         self._streams.append(s)
         return s
 
-    def start(self):
+    def _open_all(self):
         for i, dev in enumerate(self.loops):
             try:
                 self._open(dev, lambda x, i=i: self._push_loop(i, x)).start_stream()
@@ -164,7 +194,7 @@ class MixedInput:
                 print(f"[audio] cannot record {_clean(dev['name'])}: {e}", file=sys.stderr)
         self._open(self.mic, self._push_mic).start_stream()
 
-    def stop(self):
+    def _close_streams(self):
         for s in self._streams:
             try:
                 s.stop_stream()
@@ -173,6 +203,16 @@ class MixedInput:
                 pass
         self._streams = []
 
+    def start(self):
+        self._running.set()
+        self._last_mic = time.monotonic()
+        self._open_all()
+        threading.Thread(target=self._watchdog, daemon=True, name="audio-watchdog").start()
+
+    def stop(self):
+        self._running.clear()
+        self._close_streams()
+
     def close(self):
         self.stop()
         try:
@@ -180,9 +220,57 @@ class MixedInput:
         except Exception:
             pass
 
+    # -- watchdog: reopen a dead stream, keep the timeline going meanwhile --
+    def _watchdog(self):
+        next_try = 0.0
+        stalled_since = None
+        fed_until = 0.0
+        while self._running.is_set():
+            time.sleep(0.1)
+            now = time.monotonic()
+            if now - self._last_mic < self.STALL_SEC:
+                if stalled_since is not None:
+                    gap = now - stalled_since
+                    msg = f"Audio restored after {gap:.0f} s (device reconnected)"
+                    print(f"[audio] {msg}", file=sys.stderr)
+                    self.on_event("restored", msg)
+                    stalled_since = None
+                continue
+            if stalled_since is None:
+                stalled_since = self._last_mic
+                fed_until = self._last_mic
+                msg = (f"No audio from '{self.mic['name']}' for {self.STALL_SEC:.0f} s: "
+                       "reconnecting the devices")
+                print(f"[audio] {msg}", file=sys.stderr)
+                self.on_event("stalled", msg)
+            # silence for the time without audio, so timestamps stay right
+            while fed_until + self.block / TARGET_SR <= now:
+                self._feed(np.zeros(self.block, np.float32))
+                fed_until += self.block / TARGET_SR
+            if now >= next_try:
+                next_try = now + self.RETRY_SEC
+                self._reopen()
+
+    def _reopen(self):
+        if not self._reopen_lock.acquire(blocking=False):
+            return
+        try:
+            self._close_streams()
+            self._resolve()
+            self._open_all()
+            self.restarts += 1
+            print(f"[audio] reopened: {self.describe()}", file=sys.stderr)
+        except Exception as e:
+            self.errors.append(f"reopen: {e}")
+            print(f"[audio] reopen failed, retrying: {e}", file=sys.stderr)
+        finally:
+            self._reopen_lock.release()
+
     # -- system audio: bounded buffers the microphone mixes from --
     def _push_loop(self, i: int, x: np.ndarray):
         with self._lock:
+            if i >= len(self._bufs):
+                return
             buf = self._bufs[i]
             buf.append(x)
             while sum(len(b) for b in buf) > self.MAX_BUFFER_SEC * TARGET_SR:
@@ -205,15 +293,20 @@ class MixedInput:
                         buf[0] = chunk[k:]
         return out
 
+    def _feed(self, d: np.ndarray):
+        with self._feed_lock:
+            if self.loops:
+                d = d + self._take(len(d)) * self.system_gain
+            np.clip(d, -1.0, 1.0, out=d)
+            self.callback(d[:, None], len(d), None, None)
+
     # -- microphone: the clock; every 100 ms block gets the system audio mixed in --
     def _push_mic(self, x: np.ndarray):
+        self._last_mic = time.monotonic()
         pending = np.concatenate([self._mic_pending, x * self.mic_gain])
         while len(pending) >= self.block:
             d, pending = pending[:self.block].copy(), pending[self.block:]
-            if self.loops:
-                d += self._take(self.block) * self.system_gain
-            np.clip(d, -1.0, 1.0, out=d)
-            self.callback(d[:, None], self.block, None, None)
+            self._feed(d)
         self._mic_pending = pending
 
 

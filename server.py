@@ -431,6 +431,8 @@ class Recorder:
             self.set_state("finalizing", label)
         elif t == "error":
             hub.emit({"type": "toast", "level": "error", "text": f"{ev.get('where')}: {ev.get('message')}"})
+        elif t == "audio_restored":   # Windows build: audio_sources.py watchdog
+            hub.emit({"type": "toast", "level": "ok", "text": ev.get("message", "Audio restored")})
 
     def _emit_shot(self, shot: dict, new: bool = False):
         if not shot.get("deleted"):

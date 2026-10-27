@@ -1044,8 +1044,16 @@ def main():
         # Windows build: microphone + what you hear (the others in a call with a headset).
         try:
             from audio_sources import MixedInput
+            def on_audio_event(kind, message):
+                # A lost / restored audio device must never go unnoticed (the UI shows a toast).
+                if kind == "stalled":
+                    events.emit("error", where="audio", message=message)
+                else:
+                    events.emit("audio_restored", message=message)
+
             stream = MixedInput(audio_callback, SAMPLE_RATE, 1600, mic=args.mic_device,
-                                system=args.system_audio, output=args.output_device)
+                                system=args.system_audio, output=args.output_device,
+                                on_event=on_audio_event)
             print(f"Audio: {stream.describe()}")
             events.emit("audio_sources", description=stream.describe())
         except Exception as e:
