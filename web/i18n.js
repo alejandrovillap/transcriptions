@@ -31,7 +31,11 @@ window.I18N = (() => {
     'How long a silence ends a phrase. Shorter: text appears sooner, in smaller pieces. Longer: fewer, longer chunks. Can be changed while recording.':
       'Cuánto silencio cierra una frase. Menos: el texto aparece antes, en trozos pequeños. Más: menos trozos y más largos. Se puede cambiar mientras grabas.',
     'Starting recording…': 'Iniciando grabación…', 'Preparing the recognizer': 'Preparando el reconocedor',
-    'Launching…': 'Iniciando…', 'Stopping…': 'Deteniendo…', 'Finishing the last phrase': 'Terminando la última frase',
+    'Launching…': 'Iniciando…', 'Checking the recognizer': 'Comprobando el reconocedor',
+    'the first start after turning on the computer can take a minute or two': 'el primer arranque tras encender el equipo puede tardar uno o dos minutos',
+    'Starting recognizer': 'Iniciando el reconocedor', 'Loading Silero VAD': 'Cargando el detector de voz',
+    'Loading speaker model': 'Cargando el modelo de hablantes', 'Opening the audio': 'Abriendo el audio',
+    'Stopping…': 'Deteniendo…', 'Finishing the last phrase': 'Terminando la última frase',
     'Finalizing session': 'Cerrando la sesión', 'Transcribing the remaining speech': 'Transcribiendo lo que falta',
     'Stop recording': 'Detener', 'Stop (same as Ctrl+C)': 'Detener (igual que Ctrl+C)', 'Pause': 'Pausa', 'Resume': 'Reanudar',
     'Mute the microphone; the session keeps running': 'Silencia el micrófono; la sesión sigue',
@@ -184,6 +188,7 @@ window.I18N = (() => {
   // Claude API errors (Beautify / minutes / chat) arrive as raw JSON; say what happened.
   const limitMsg = d => `Se alcanzó el límite de uso de tu cuenta de Claude${d ? `; se renueva el ${d}` : ''}. Súbelo en console.anthropic.com o espera a esa fecha.`;
   const P = [
+    [/^Loading (Parakeet .+|Whisper .+)$/, (m, what) => `Cargando ${what}`],
     // The `claude` CLI keeps its own login (not the desktop app's): expired → say how to renew it.
     [/^(?:Failed to authenticate\.\s*)?API Error: 401\b[\s\S]*$/, () => 'La sesión de Claude en este equipo venció. Abre una terminal, ejecuta «claude auth login» y vuelve a generar.'],
     [/^API Error: \d+\b(?=[\s\S]*?(?:usage limits|spend limit))(?:[\s\S]*?(\d{4}-\d{2}-\d{2}))?[\s\S]*$/, (m, d) => limitMsg(d)],

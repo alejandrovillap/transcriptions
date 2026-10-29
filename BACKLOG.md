@@ -1,6 +1,6 @@
 # Backlog
 
-Actualizado: 2026-10-23. Plan de fondo: strawman «Reuniones con memoria» (privado):
+Actualizado: 2026-10-28. Plan de fondo: strawman «Reuniones con memoria» (privado):
 https://claude.ai/artifact/NRbBAqBNPwE5cVe6112mEU
 
 Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
@@ -40,11 +40,15 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 ## Open items
 
 ### Por validar con una reunión real
-- [ ] Llamada real de punta a punta: el vigilante detecta la llamada, se graba, sale la minuta y se archiva en el vault.
+- [~] Llamada real de punta a punta. **Validado 2026-10-26** con la reunión de PMI (86 min, iniciada a mano): grabación, versión anotada, minuta (6 decisiones, 14 acuerdos) y nota en el vault sin avisos. **Falta**: que el vigilante detecte la llamada sola (ver «Zoom no detectado» abajo).
 - [ ] Diarización con varias personas reales. Los umbrales (`MERGE_CENTROID_DIST` 0.45, `MIN_SPEAKER_SEC` 4 s) se calibraron solo con 2 sesiones: una de 3 voces y una de 1.
 - [ ] Glosario durante una grabación en vivo con Parakeet (con audio sintético sí funciona).
 
 ### Bugs y riesgos conocidos
+- [x] **Zoom no detectado** (2026-10-28): Windows (compilación 26300) dejó de actualizar el registro `ConsentStore\microphone` el 12 oct y movió ese historial a una base de datos que solo lee un administrador, así que el vigilante no veía ninguna llamada. Ahora pregunta al motor de audio (WASAPI, con `pycaw`) qué procesos capturan del micrófono; probado en vivo con una llamada de Zoom. El registro queda como respaldo. **Falta** ver al vigilante detectar sola una llamada nueva.
+- [x] **Arranque lento de la grabación** (2026-10-26): en frío tardaba hasta 2–3 min sin avance visible. La comprobación previa ahora corre al arrancar el servidor y queda guardada (0.09 s al pulsar Grabar); los modelos cargan sin consultar Hugging Face si ya están descargados; Silero VAD carga de su copia local; el respaldo de Whisper se carga cuando ya se está escuchando; la interfaz muestra cada paso traducido. En caliente: 24 s del clic a «escuchando». **Falta** medir un arranque en frío (tras reiniciar el equipo).
+- [ ] **Minuta al detender desde la interfaz**: al detener una grabación desde la interfaz solo se ofrece la versión final, no la minuta (el vigilante sí ofrece «final + minuta»). El 26 oct hubo que pedir la minuta a mano.
+- [ ] **Grabar continúa la sesión seleccionada**: si en la interfaz hay una sesión anterior elegida, Grabar la continúa en vez de crear una nueva. El 28 oct, la llamada de Zoom se anexó a una sesión de prueba del 26 oct en el proyecto `test`. Conviene preguntar o dejar más claro cuándo se continúa.
 - [x] **Respaldo de Whisper lento al empezar** (2026-10-23): una frase espera a Whisper como máximo 20 s (`LANG_FALLBACK_WAIT_SEC`); si aún no cargó, se queda con lo que reconoció Parakeet y se avisa una vez. Sigue pendiente: en CPU, Whisper va unas 2 veces más lento que el tiempo real cuando sí rehace una frase.
 - [x] **Claude hereda el entorno** (2026-10-23): `claude_cli.py` quita las variables de la sesión anfitriona cuando corre anidado (`CLAUDECODE=1`). Se probó lanzando el vigilante desde una sesión de Claude Code: Preguntar respondió normal. Nota: el 401 del 19 oct venía sobre todo de la credencial vencida de la CLI; esto es una defensa, y los scripts de arranque «limpio» ya no hacen falta.
 - [x] **Login de la CLI aparte** (2026-10-23): un 401 ahora se muestra en español con el remedio («ejecuta claude auth login»), en la interfaz y en los avisos del vigilante. La causa no tiene arreglo en código: la sesión de escritorio no renueva la de `claude`.
@@ -64,6 +68,8 @@ Estados: **[ ]** pendiente · **[~]** en curso · **[x]** hecho.
 - [x] Sesión `20261019_171338.diarized` del proyecto `test`, creada por el `rediarize.py` anterior: se conserva tal cual porque contiene la segunda grabación de prueba (decidido 2026-10-23). El `rediarize.py` actual ya no crea sesiones así.
 - [x] Borrar el worktree `C:\Users\villa\tnm-asr` y las ramas ya fusionadas `ui/fluent-look`, `fix/asr-quality` y `feat/meetings-vault` (2026-10-23).
 - [x] FastAPI actualizado en el `.venv` a 0.162 (2026-10-23); `pip check` sin conflictos y servidor probado.
+- [ ] Modelo Canary 1B (~1 GB) en la caché de Hugging Face (`models--istupakov--canary-1b-v2-onnx`), descargado en una prueba del 19 oct y que la app no usa: se puede borrar.
+- [ ] Sacar la llamada de Zoom del 28 oct de la sesión de prueba `test/20261026_221807` (ver «Grabar continúa la sesión seleccionada»).
 
 ## Historial
 

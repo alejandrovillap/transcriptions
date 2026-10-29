@@ -90,13 +90,42 @@ def load_models(engine_name="whisper", asr_model=None):
 
     print("Loading Silero VAD...")
     events.emit("status", state="loading", detail="Loading Silero VAD")
-    vad_model, utils = torch.hub.load(
-        repo_or_dir="snakers4/silero-vad",
-        model="silero_vad",
-        trust_repo=True,
-    )
+    # The local copy torch.hub keeps after the first download: loading it from GitHub
+    # again asks the network every time (slow or stuck when the network is).
+    local_vad = Path(torch.hub.get_dir()) / "snakers4_silero-vad_master"
+    if (local_vad / "hubconf.py").exists():
+        vad_model, utils = torch.hub.load(str(local_vad), "silero_vad", source="local")
+    else:
+        vad_model, utils = torch.hub.load(repo_or_dir="snakers4/silero-vad", model="silero_vad",
+                                          trust_repo=True)
     print("Silero VAD loaded.")
     return asr_engine, vad_model
+
+
+# Hugging Face repos of the models a recording may load (asr_engines, speaker_id, frames_l1).
+HF_REPOS = {
+    "parakeet": "istupakov/parakeet-tdt-0.6b-v3-onnx",
+    "whisper": "mobiuslabsgmbh/faster-whisper-large-v3-turbo",
+    "speaker": "speechbrain/spkrec-ecapa-voxceleb",
+    "clip": "openai/clip-vit-base-patch32",
+}
+
+
+def hf_offline_if_cached(needed: list[str]) -> bool:
+    """Load models without asking Hugging Face for updates when every model this recording may
+    need is already downloaded. Each load otherwise makes network calls: seconds when the
+    network is fine, up to a minute on a cold start. Must run before huggingface_hub is
+    imported (it reads HF_HUB_OFFLINE once); main.py imports it only when loading models."""
+    if os.environ.get("HF_HUB_OFFLINE") or "huggingface_hub" in sys.modules:
+        return False
+    hub = Path(os.environ.get("HF_HUB_CACHE") or Path(os.environ.get("HF_HOME") or
+                                                       Path.home() / ".cache" / "huggingface") / "hub")
+    for key in needed:
+        snaps = hub / ("models--" + HF_REPOS[key].replace("/", "--")) / "snapshots"
+        if not (snaps.is_dir() and any(snaps.iterdir())):
+            return False
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    return True
 
 
 def audio_callback(indata, frames, time_info, status):
@@ -1007,6 +1036,17 @@ def main():
                 start_time=session_data["start_time"].isoformat(),
                 diarization=enable_diarization, continued=prefix_text is not None)
 
+    if not args.asr_model:
+        needed = [args.engine]
+        if args.engine != "whisper" and args.lang.lower() != "auto":
+            needed.append("whisper")          # wrong-language fallback (LangFallback)
+        if enable_diarization:
+            needed.append("speaker")
+        if not args.no_frames_l1:
+            needed.append("clip")             # auto frames can be switched on mid-recording
+        if hf_offline_if_cached(needed):
+            print("[models] all downloaded: loading without asking Hugging Face for updates")
+
     asr_engine, vad_model = load_models(args.engine, args.asr_model)
     if (args.vocab_file or args.glossary_file) and not asr_engine.supports_hotwords and not args.vocab_correct:
         print(f"[vocab] {args.engine} has no hotwords; vocab hints are ignored (add --vocab-correct "
@@ -1039,8 +1079,6 @@ def main():
 
     # Start transcription worker thread
     lang_mode = args.lang.lower()
-    if lang_mode != "auto" and args.engine != "whisper":
-        lang_fallback.start()
     worker = threading.Thread(
         target=transcription_worker,
         args=(asr_engine, output_file, session_data, enable_diarization, lang_mode),
@@ -1062,6 +1100,7 @@ def main():
     ocr_thread.start()
 
     # Start audio stream
+    events.emit("status", state="loading", detail="Opening the audio")
     stream = None
     if args.system_audio or args.mic_device:
         # Windows build: microphone + what you hear (the others in a call with a headset).
@@ -1181,6 +1220,11 @@ def main():
     print(f"Listening on default microphone (auto-stop in {args.minutes} min, Ctrl+C to stop early)...")
     print(f"Ctrl+Shift+S: screenshot, Ctrl+Shift+W: selection")
     events.emit("status", state="listening", engine=args.engine)
+    if lang_mode != "auto" and args.engine != "whisper":
+        # Only now: loading 1.6 GB of Whisper while the other models and the audio were starting
+        # made a cold start much slower. A wrong-language phrase waits at most
+        # LANG_FALLBACK_WAIT_SEC for it.
+        lang_fallback.start()
 
     try:
         vad_loop(vad_model)

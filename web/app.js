@@ -358,7 +358,7 @@ function renderControl() {
     el.innerHTML = `
       <button class="rec-btn busy" disabled><span class="spin-w"></span>Starting recording…</button>
       <div><div class="state-title">Preparing the recognizer</div>
-        <div class="state-sub">${esc(r.state === 'loading' && r.detail ? r.detail : 'Launching…')} · the first start can take a minute</div></div>`;
+        <div class="state-sub"><span>${esc(r.state === 'loading' && r.detail ? r.detail : (r.state === 'loading' ? 'Launching…' : 'Checking the recognizer'))}</span> · <span>the first start after turning on the computer can take a minute or two</span></div></div>`;
     return;
   }
   if (r.state === 'stopping' || r.state === 'finalizing') {

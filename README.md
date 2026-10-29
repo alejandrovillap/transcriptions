@@ -90,9 +90,11 @@ archivo están los tiempos y la lista de apps que cuentan como llamada.
 Para ver qué apps están usando el micrófono en este momento:
 `.venv\Scripts\python call_watcher.py --status`.
 
-**Cómo detecta las llamadas:** lee el mismo registro de Windows que enciende el icono de micrófono
-de la barra de tareas. Solo cuentan las apps de la lista, así que el propio grabador o un dictado
-no disparan nada.
+**Cómo detecta las llamadas:** pregunta al motor de audio de Windows qué programas están capturando
+de algún micrófono en ese momento. Solo cuentan las apps de la lista, así que el propio grabador o un
+dictado no disparan nada. (Antes leía el registro del icono de micrófono de la barra de tareas, pero
+las compilaciones de Windows de octubre de 2026 dejaron de actualizarlo y una llamada de Zoom pasó
+inadvertida; el registro se sigue leyendo como respaldo en versiones anteriores.)
 
 > Avisa siempre a los participantes de que la reunión se graba. El modo automático graba sin
 > preguntar: úsalo solo donde tengas consentimiento.

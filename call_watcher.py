@@ -3,11 +3,13 @@
 record, records through the web UI server, stops when the call ends and can then build the
 final beautified version and the minutes.
 
-Detection uses the registry that drives the taskbar microphone icon:
-  HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone
-Every app that used the mic has a key with LastUsedTimeStart / LastUsedTimeStop; Stop is 0
-while the app is using it. Only apps in the allow-list count (Teams, Zoom, Webex, browsers…),
-so the recorder's own Python, dictation tools etc. never trigger it.
+Detection asks the Windows audio engine (WASAPI) which processes have an ACTIVE capture
+session on any microphone. Windows builds from October 2026 stopped updating the registry
+the watcher used before (CapabilityAccessManager\\ConsentStore\\microphone, LastUsedTimeStop
+= 0 while in use; the history moved to a database only administrators can read), so a Zoom
+call went unnoticed. The registry is still read as a second source for older builds.
+Only apps in the allow-list count (Teams, Zoom, Webex, browsers…), so the recorder's own
+Python, dictation tools etc. never trigger it.
 
 Runs in the background with an icon next to the clock (pythonw call_watcher.py, or
 callwatch.bat). Settings: .webui/call_watcher.json (also from the icon's menu).
@@ -116,6 +118,47 @@ def _in_use(path: str) -> bool:
         return False
 
 
+_com_ready = threading.local()
+_wasapi_failed = [False]
+
+
+def _capturing_processes() -> list[str]:
+    """Executable names (lower-case) with an ACTIVE capture session on any active microphone,
+    from the Windows audio engine. Empty if pycaw/comtypes are missing or the query fails."""
+    try:
+        from ctypes import POINTER, cast
+        import comtypes
+        import psutil
+        from comtypes import CLSCTX_ALL
+        from pycaw.pycaw import AudioUtilities, IAudioSessionControl2, IAudioSessionManager2
+        if not getattr(_com_ready, "done", False):   # COM is per thread (the poller's own)
+            comtypes.CoInitialize()
+            _com_ready.done = True
+        names = []
+        devices = AudioUtilities.GetDeviceEnumerator().EnumAudioEndpoints(1, 1)   # capture, active
+        for i in range(devices.GetCount()):
+            mgr = cast(devices.Item(i).Activate(IAudioSessionManager2._iid_, CLSCTX_ALL, None),
+                       POINTER(IAudioSessionManager2))
+            sessions = mgr.GetSessionEnumerator()
+            for j in range(sessions.GetCount()):
+                ctl = sessions.GetSession(j)
+                if ctl.GetState() != 1:            # AudioSessionStateActive
+                    continue
+                pid = ctl.QueryInterface(IAudioSessionControl2).GetProcessId()
+                if not pid:
+                    continue
+                try:
+                    names.append(psutil.Process(pid).name().lower())
+                except psutil.Error:
+                    pass
+        return names
+    except Exception as e:
+        if not _wasapi_failed[0]:
+            _wasapi_failed[0] = True
+            log.warning("microphone sessions (WASAPI) unavailable, using the registry only: %s", e)
+        return []
+
+
 def call_apps_using_mic(apps: dict, test_file: Path | None = None) -> list[str]:
     """Labels of allow-listed apps holding the microphone right now."""
     if test_file is not None:   # tests: the file's lines are the labels "in a call"
@@ -124,9 +167,8 @@ def call_apps_using_mic(apps: dict, test_file: Path | None = None) -> list[str]:
         except OSError:
             return []
     found = []
-    for name, in_use in _mic_entries():
-        if not in_use:
-            continue
+    using = _capturing_processes() + [name for name, in_use in _mic_entries() if in_use]
+    for name in using:
         low = name.lower()
         label = next((lbl for pat, lbl in apps.items() if pat in low), None)
         if label and label not in found:
@@ -789,8 +831,12 @@ def main():
     if args.status:
         sys.stdout.reconfigure(encoding="utf-8")
         cfg = load_config()
+        logging.basicConfig(level=logging.WARNING)
+        print("Capturing from a microphone now (Windows audio engine):",
+              ", ".join(sorted(set(_capturing_processes()))) or "none")
+        print("Registry (older Windows builds):")
         for name, in_use in _mic_entries():
-            print(f"{'IN USE' if in_use else '      '}  {name}")
+            print(f"  {'IN USE' if in_use else '      '}  {name}")
         print("Call apps using the mic now:", call_apps_using_mic(cfg["apps"]) or "none")
         return
     if args.autostart:

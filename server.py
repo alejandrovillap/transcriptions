@@ -781,6 +781,10 @@ chat = ChatManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     S.WEBUI_DIR.mkdir(exist_ok=True)
+    # Check (and warm up) the recognizer's Python in the background now, not when Record is
+    # pressed: on a cold start that import alone took a minute or more before the recording
+    # itself started loading its models.
+    asyncio.get_running_loop().create_task(check_recorder(S.load_settings().get("engine") or "whisper"))
     yield
     if recorder.active:
         print("Stopping the running recording (finalizing, please wait)...")
@@ -864,12 +868,24 @@ async def status():
             "settings": S.load_settings(), "recorder": recorder.snapshot()}
 
 
+_recorder_checks: dict[tuple[str, str], asyncio.Task] = {}   # (python, module) → check; successes kept
+
+
 @app.get("/api/check-recorder")
 async def check_recorder(engine: str = "whisper"):
+    """Can the recognizer's Python import its libraries? A success is remembered for the life
+    of the server, and a check already running (the one started with the server) is awaited
+    instead of starting another, so pressing Record no longer pays for the import twice."""
     python = S.load_settings().get("recorder_python") or sys.executable
     asr_module = "faster_whisper" if engine == "whisper" else "onnx_asr"
-    rc, out, err = await run_cmd(python, "-c", f"import {asr_module}, sounddevice, easyocr, torch; print('ok')")
-    return {"ok": rc == 0, "python": python, "error": (err or out).strip()[-300:]}
+    key = (python, asr_module)
+    task = _recorder_checks.get(key)
+    if task is None or (task.done() and not task.result()["ok"]):
+        async def run():
+            rc, out, err = await run_cmd(python, "-c", f"import {asr_module}, sounddevice, easyocr, torch; print('ok')")
+            return {"ok": rc == 0, "python": python, "error": (err or out).strip()[-300:]}
+        task = _recorder_checks[key] = asyncio.get_running_loop().create_task(run())
+    return await asyncio.shield(task)
 
 
 @app.get("/api/settings")
