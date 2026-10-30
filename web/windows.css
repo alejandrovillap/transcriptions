@@ -95,3 +95,7 @@
 .win-dl[hidden] { display: none; }
 #dlMenu { min-width: min(300px, calc(100vw - 16px)); max-width: calc(100vw - 16px); }
 #dlMenu a.mi { text-decoration: none; color: inherit; display: flex; }
+
+/* Session actions (rename / move), next to the session crumb */
+.win-sess-act { width: 28px; height: 28px; font-size: 18px; line-height: 1; margin-left: 2px; flex: none; }
+.win-sess-act[hidden] { display: none; }

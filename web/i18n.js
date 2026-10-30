@@ -168,6 +168,12 @@ window.I18N = (() => {
     'Ask anything about this transcript.': 'Pregunta lo que quieras sobre esta transcripción.',
     // Windows build (windows.js)
     'Options': 'Opciones', 'Recording': 'Grabación', 'Audio': 'Audio',
+    'Rename the session or move it to another project': 'Renombrar la sesión o moverla a otro proyecto',
+    'Rename…': 'Renombrar…', 'Give the call a name you will recognize': 'Ponle a la llamada un nombre que reconozcas',
+    'Move to another project…': 'Mover a otro proyecto…', 'Move to another project': 'Mover a otro proyecto',
+    'Takes the transcript, versions, minutes and screenshots along': 'Se lleva la transcripción, versiones, minutas y capturas',
+    'Rename session': 'Renombrar sesión', 'e.g. Weekly sync with the client': 'p. ej. Sync semanal con el cliente',
+    'Session renamed': 'Sesión renombrada', 'Move': 'Mover', 'Moved to': 'Movida a', 'Project': 'Proyecto',
     'Download': 'Descargar', 'Not generated yet': 'Aún no generada', 'Annotated version': 'Versión anotada',
     'Download the transcript, the annotated version or the minutes': 'Descargar la transcripción, la versión anotada o la minuta',
     'Plain text (.txt), every line with its time': 'Texto (.txt), cada línea con su hora',

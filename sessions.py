@@ -193,6 +193,14 @@ def session_dir(project: str, sid: str) -> Path:
     return project_dir(project) / "sessions" / safe_name(sid)
 
 
+def session_title(project: str, sid: str) -> str:
+    """Name the user gave the session (Windows build, sessions/<sid>/meta.json); '' if none."""
+    try:
+        return str(json.loads((session_dir(project, sid) / "meta.json").read_text(encoding="utf-8")).get("title") or "")
+    except Exception:
+        return ""
+
+
 def sid_datetime(sid: str) -> datetime | None:
     try:
         return datetime.strptime(sid, "%Y%m%d_%H%M%S")
@@ -216,6 +224,7 @@ def list_sessions(project: str) -> list[dict]:
         latest = latest_version(manifest)
         out.append({
             "sid": sid,
+            "title": session_title(project, sid),
             "date": dt.strftime("%Y-%m-%d") if dt else "",
             "start": times[0] if times else (dt.strftime("%H:%M:%S") if dt else ""),
             "end": times[-1] if times else "",
@@ -451,6 +460,7 @@ def load_session(project: str, sid: str) -> dict:
     return {
         "project": project,
         "sid": sid,
+        "title": session_title(project, sid),
         "transcript_path": str(path),
         "entries": entries,
         "screenshots": shots,

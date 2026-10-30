@@ -36,6 +36,7 @@ import minutes_api   # Windows build: formal minutes (minutes.py)
 import audio_api     # Windows build: audio device list (audio_sources.py)
 import downloads_api # Windows build: transcript / annotated / minutes downloads
 import beautify_direct # Windows build: Beautify in one generation (no agent)
+import session_admin_api # Windows build: rename a session / move it to another project
 import claude_cli
 import select_frames as SF
 import sessions as S
@@ -799,6 +800,22 @@ minutes_api.hub = hub
 app.include_router(minutes_api.router)
 app.include_router(audio_api.router)
 app.include_router(downloads_api.router)
+app.include_router(session_admin_api.router)
+
+
+def _session_busy(project: str, sid: str) -> str:
+    if recorder.active and recorder.project == project and recorder.sid == sid:
+        return "The session is being recorded; stop it first"
+    if jobs.running(project, sid):
+        return "Beautify is running for this session"
+    if minutes_api.jobs.get((project, sid), {}).get("status") == "running":
+        return "Minutes are being generated for this session"
+    if (project, sid) in chat.busy:
+        return "The chat is answering for this session"
+    return ""
+
+
+session_admin_api.busy = _session_busy
 S.PROJECTS_DIR.mkdir(exist_ok=True)
 app.mount("/files", StaticFiles(directory=str(S.PROJECTS_DIR)), name="files")
 app.mount("/static", StaticFiles(directory=str(WEB_DIR)), name="static")

@@ -68,6 +68,7 @@ screenshot_dir: Path | None = None
 ocr_queue: queue.Queue[str] = queue.Queue()
 pending_injections: queue.Queue[str] = queue.Queue()
 audio_chunks: list[np.ndarray] = []
+block_src: list = []   # (mic_rms, sys_rms) per 100 ms block, for source-aware speaker labels
 save_audio_flag = False
 mic_muted = threading.Event()   # set via --control-stdin MUTE/UNMUTE
 live_frames = None   # autoframes.LiveFrames once auto frames are switched on (--auto-frames / AUTO ON)
@@ -107,6 +108,8 @@ def audio_callback(indata, frames, time_info, status):
         # Feed silence (not nothing) so timestamps stay aligned with the wall clock
         # and a phrase in progress ends normally.
         data = np.zeros_like(data)
+    if isinstance(time_info, dict):   # Windows build: per-source energy from audio_sources.MixedInput
+        block_src.append((0.0, 0.0) if mic_muted.is_set() else (time_info["mic"], time_info["sys"]))
     audio_queue.put(data)
     if events.enabled:
         events.emit_throttled("level", 0.08, "level", rms=float(np.sqrt(np.mean(data * data))))
@@ -632,7 +635,14 @@ def finalize_diarization(session_data, output_path, num_speakers, cluster_thresh
 
     print(f"[diarization] Clustering {len(windows)} embedding windows...")
     events.emit("diarization", state="clustering", windows=len(windows))
-    labels = cluster_and_label(windows, num_speakers, cluster_threshold)
+    labels = None
+    if session_data.get("block_src"):   # Windows build: me = microphone, others = call audio
+        from source_diarization import labels_with_sources, summary
+        labels = labels_with_sources(windows, session_data["block_src"], num_speakers, cluster_threshold)
+        if labels is not None:
+            print(f"[diarization] by source: {summary(windows, session_data['block_src'])}")
+    if labels is None:
+        labels = cluster_and_label(windows, num_speakers, cluster_threshold)
 
     n_speakers = len(set(labels))
     print(f"[diarization] Found {n_speakers} speaker(s).")
@@ -1241,9 +1251,13 @@ def main():
                     "windows": diar_data["windows"],
                     "injections": diar_data["injections"],
                     "transcript_path": str(output_path),
+                    # per-source energy; not valid once a continued session shifted the times
+                    "block_src": list(block_src) if diar_data is session_data else None,
                 }, f)
             print(f"Session data saved: {session_path}")
 
+            if diar_data is session_data:
+                diar_data["block_src"] = block_src
             finalize_diarization(
                 diar_data, output_path, num_speakers, args.cluster_threshold,
                 raw_text=raw_text, prefix_text=prefix_for_output,

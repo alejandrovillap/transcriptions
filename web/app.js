@@ -213,7 +213,7 @@ async function selectSession(sid, { quiet = false } = {}) {
   st.follow = true;
   if (!quiet) st.chat = { messages: [], busy: false };
   $('#chatDot').classList.add('hidden');
-  $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(sid))}` : esc(sidLabel(sid));
+  $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(st.session.title || sidLabel(sid))}` : esc(st.session.title || sidLabel(sid));
   renderAll();
   loadChat();
   loadFrames();
@@ -225,7 +225,7 @@ async function reloadSession() {
   try {
     st.session = await api('GET', sessUrl());
     applyVis(st.session.visibility);
-    $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(sidLabel(st.sid))}` : esc(sidLabel(st.sid));
+    $('#sessionName').innerHTML = st.session.live ? `<span style="color:var(--rec)">●</span> Live · ${esc(st.session.title || sidLabel(st.sid))}` : esc(st.session.title || sidLabel(st.sid));
     renderTranscript(); renderShots(); renderBeautify(); renderDoc();
     if (!recActive()) renderControl();
     loadFrames();
@@ -287,8 +287,8 @@ function renderSessionMenu() {
     const badge = s.final ? '<span class="mini-badge final">FINAL</span>' : s.versions ? `<span class="mini-badge">v${s.versions}</span>` : '';
     return `<button class="mi ${s.sid === st.sid ? 'on' : ''}" data-sid="${esc(s.sid)}">
       ${live ? '<span class="live-dot"></span>' : `<span class="tick">${s.sid === st.sid ? '✓' : ''}</span>`}
-      <span class="mi-main"><div class="mi-title">${esc(sidLabel(s.sid))} ${badge}</div>
-        <div class="mi-sub">${live ? 'Recording now' : `${esc(s.start)}–${esc(s.end)} · ${s.lines} lines${s.diarized ? ' · speakers' : ''}`}</div></span>
+      <span class="mi-main"><div class="mi-title">${esc(s.title || sidLabel(s.sid))} ${badge}</div>
+        <div class="mi-sub">${live ? 'Recording now' : `${s.title ? esc(sidLabel(s.sid)) + ' · ' : ''}${esc(s.start)}–${esc(s.end)} · ${s.lines} lines${s.diarized ? ' · speakers' : ''}`}</div></span>
     </button>`;
   }).join('');
 }

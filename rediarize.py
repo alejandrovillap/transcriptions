@@ -113,7 +113,14 @@ def build_diarized_lines(data, num_speakers, cluster_threshold):
     injections = data["injections"]
     start_time = data["start_time"]
 
-    labels = cluster_and_label(windows, num_speakers, cluster_threshold)
+    labels = None
+    if data.get("block_src"):   # Windows build: me = microphone, others = call audio
+        from source_diarization import labels_with_sources, summary
+        labels = labels_with_sources(windows, data["block_src"], num_speakers, cluster_threshold)
+        if labels is not None:
+            print(f"By source: {summary(windows, data['block_src'])}")
+    if labels is None:
+        labels = cluster_and_label(windows, num_speakers, cluster_threshold)
     n_speakers = len(set(labels))
     print(f"Found {n_speakers} speaker(s).")
 

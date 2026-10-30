@@ -5,6 +5,7 @@
 //      into a collapsible "Options" row with a one-line summary (open state remembered).
 //   2. Settings dialog in tabs: Audio · Recording · AI · Project.
 //   3. ES / EN switch next to the theme button (i18n.js).
+//   4. Download menu.  5. Session actions: rename, move to another project.
 (() => {
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -147,9 +148,102 @@
     if (b) b.hidden = typeof st === 'undefined' || !st.sid || !st.session;
   }
 
+  // ── 5. Session actions: rename, move to another project (session_admin_api.py) ──
+  function addSessionActions() {
+    const crumb = $('#sessionBtn');
+    if (!crumb || $('#sessActBtn')) return;
+    const b = document.createElement('button');
+    b.id = 'sessActBtn';
+    b.type = 'button';
+    b.className = 'icon-btn win-sess-act';
+    b.title = T('Rename the session or move it to another project');
+    b.textContent = '⋯';
+    crumb.after(b);
+    const menu = document.createElement('div');
+    menu.className = 'menu hidden';
+    menu.id = 'sessActMenu';
+    document.body.appendChild(menu);
+    b.onclick = () => {
+      if (typeof st === 'undefined' || !st.sid) return;
+      menu.innerHTML =
+        `<button class="mi" data-act="rename"><span class="mi-main"><div class="mi-title">${T('Rename…')}</div><div class="mi-sub">${T('Give the call a name you will recognize')}</div></span></button>` +
+        `<button class="mi" data-act="move"><span class="mi-main"><div class="mi-title">${T('Move to another project…')}</div><div class="mi-sub">${T('Takes the transcript, versions, minutes and screenshots along')}</div></span></button>`;
+      openMenu(menu, b);
+    };
+    menu.onclick = e => {
+      const a = e.target.closest('[data-act]'); if (!a) return;
+      closeMenus();
+      (a.dataset.act === 'rename' ? renameDialog : moveDialog)();
+    };
+  }
+
+  function renameDialog() {
+    const cur = (st.session && st.session.title) || '';
+    openModal(`
+      <div class="modal-head"><h2>${T('Rename session')}</h2><p>${esc(sidLabel(st.sid))}</p></div>
+      <div class="modal-body"><div class="frow"><label for="rnTitle">${T('Name')}</label><input class="field" id="rnTitle" maxlength="120" value="${esc(cur)}" placeholder="${T('e.g. Weekly sync with the client')}"></div></div>
+      <div class="modal-foot"><button class="ghost-btn" data-close>${T('Cancel')}</button><button class="primary-btn" id="rnGo">${T('Save')}</button></div>`,
+    root => {
+      const inp = $('#rnTitle', root); inp.focus(); inp.select();
+      const go = async () => {
+        try {
+          const r = await api('POST', sessUrl() + '/rename', { title: inp.value });
+          closeModal();
+          if (st.session) st.session.title = r.title;
+          await loadSessions();
+          $('#sessionName').textContent = r.title || sidLabel(st.sid);
+          toast(T('Session renamed'), 'ok');
+        } catch (e) { fail(e); }
+      };
+      $('#rnGo', root).onclick = go;
+      inp.onkeydown = e => { if (e.key === 'Enter') go(); };
+      $('[data-close]', root).onclick = closeModal;
+    });
+  }
+
+  function moveDialog() {
+    const others = (st.projects || []).filter(p => p.name !== st.project);
+    const label = (st.session && st.session.title) || sidLabel(st.sid);
+    openModal(`
+      <div class="modal-head"><h2>${T('Move to another project')}</h2><p><b>${esc(label)}</b> · ${esc(st.project)} →</p></div>
+      <div class="modal-body">
+        <div class="frow"><label for="mvSel">${T('Project')}</label><select class="field" id="mvSel">
+          ${others.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('')}
+          <option value="__new">${T('New project…')}</option></select></div>
+        <div class="frow" id="mvNewRow" hidden><label for="mvNew">${T('Name')}</label><input class="field" id="mvNew" placeholder="${T('e.g. acme-discovery')}"></div>
+      </div>
+      <div class="modal-foot"><button class="ghost-btn" data-close>${T('Cancel')}</button><button class="primary-btn" id="mvGo">${T('Move')}</button></div>`,
+    root => {
+      const sel = $('#mvSel', root), row = $('#mvNewRow', root), inp = $('#mvNew', root);
+      const sync = () => { row.hidden = sel.value !== '__new'; if (!row.hidden) inp.focus(); };
+      sel.onchange = sync; sync();
+      $('#mvGo', root).onclick = async () => {
+        const target = sel.value === '__new' ? inp.value.trim().replace(/\s+/g, '-') : sel.value;
+        if (!target) return;
+        const btn = $('#mvGo', root); btn.disabled = true;
+        try {
+          const r = await api('POST', sessUrl() + '/move', { project: target });
+          closeModal();
+          await loadProjects();
+          await selectProject(r.project, { keepSession: true });
+          await selectSession(r.sid);
+          toast(`${T('Moved to')} “${r.project}”`, 'ok');
+        } catch (e) { btn.disabled = false; fail(e); }
+      };
+      $('[data-close]', root).onclick = closeModal;
+    });
+  }
+
+  function syncSessionActions() {
+    const b = $('#sessActBtn');
+    if (b) b.hidden = typeof st === 'undefined' || !st.sid || !st.session;
+  }
+
   function run() {
     addDownloadButton();
     syncDownloadButton();
+    addSessionActions();
+    syncSessionActions();
     enhanceControl();
     const modal = $('.modal');
     if (modal) enhanceSettings(modal);

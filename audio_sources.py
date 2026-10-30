@@ -294,11 +294,18 @@ class MixedInput:
         return out
 
     def _feed(self, d: np.ndarray):
+        """Mix one microphone block with the call audio and hand it on. The energy of each
+        source goes along (time_info) so speakers can be told apart by where the sound came
+        from: the microphone is you, the call audio is everyone else (source_diarization.py)."""
         with self._feed_lock:
+            mic_rms = float(np.sqrt(np.mean(d * d))) if len(d) else 0.0
+            sys_rms = 0.0
             if self.loops:
-                d = d + self._take(len(d)) * self.system_gain
+                s = self._take(len(d)) * self.system_gain
+                sys_rms = float(np.sqrt(np.mean(s * s)))
+                d = d + s
             np.clip(d, -1.0, 1.0, out=d)
-            self.callback(d[:, None], len(d), None, None)
+            self.callback(d[:, None], len(d), {"mic": mic_rms, "sys": sys_rms}, None)
 
     # -- microphone: the clock; every 100 ms block gets the system audio mixed in --
     def _push_mic(self, x: np.ndarray):
